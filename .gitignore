@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+
+# Tooling caches
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Secrets: never commit
+.env
+.env.*
+!.env.example
+
+# Run outputs
+workspaces/
+evals/reports/*.tmp
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
