@@ -7,6 +7,7 @@ Naming:
 """
 
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal, get_args
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, SecretStr
@@ -45,6 +46,15 @@ class Settings(BaseSettings):
         default=None,
         validation_alias=AliasChoices("ANTHROPIC_API_KEY", "GOALSMITH_ANTHROPIC_API_KEY"),
     )
+
+    tavily_api_key: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("TAVILY_API_KEY", "GOALSMITH_TAVILY_API_KEY"),
+    )
+
+    # Runs
+    workspace_root: Path = Path("workspaces")  # each run gets workspaces/<run_id>/
+    max_steps: int = Field(default=15, ge=1)  # default model-call budget per run
 
     # Applied to every model call. The provider SDK retries rate limits,
     # timeouts and 5xx errors with exponential backoff.

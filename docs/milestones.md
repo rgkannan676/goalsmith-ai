@@ -31,15 +31,31 @@ Each milestone is one branch (`feat/mNN-<name>`). It ends with green tests, an u
 
 **Moved:** `get_embeddings()` moves to M3, where embeddings are first used (see ADR 0003).
 
-## M2: Single agent and harness v1 (next)
+## M2: Single agent and harness v1 ✅ (branch `feat/m02-single-agent`)
 
 **Goal:** a hand-built agent loop that calls tools through the harness and stops at a budget.
 
 **Acceptance criteria**
-- [ ] Minimal `RunState` in `core/state.py`
-- [ ] `harness/loop.py`: model node, tool node, conditional edge (LangGraph)
-- [ ] `harness/tools.py`: tool registry, Pydantic argument validation, risk levels
-- [ ] `harness/budget.py`: max-steps limit with a clean stop
-- [ ] Tools: `web_search` (Tavily), `read_file`, `write_file` (run workspace only)
-- [ ] `goalsmith run "<goal>"` CLI
-- [ ] A simple research goal completes; a test proves the loop stops at the step budget
+- [x] Minimal `RunState` in `core/state.py`
+- [x] `harness/loop.py`: model node, tool node, conditional edge (LangGraph)
+- [x] `harness/tools.py`: tool registry, Pydantic argument validation, risk levels
+- [x] `harness/budget.py`: max-steps limit with a clean stop and partial result
+- [x] Tools: `web_search` (Tavily), `read_file`, `write_file` (run workspace only)
+- [x] `goalsmith run "<goal>"` CLI with live progress
+- [x] A test proves the loop stops at the step budget (`test_loop_stops_at_step_budget`)
+- [x] A live goal completes (write_file run against Claude)
+- [ ] A live *research* goal completes (needs `TAVILY_API_KEY`)
+
+## M3: RAG (next)
+
+**Goal:** search uploaded documents with hybrid retrieval and cite sources.
+
+**Acceptance criteria**
+- [ ] Ingest PDF, markdown and HTML; structure-aware chunks with metadata
+- [ ] `get_embeddings()` with local bge via fastembed (moved from M1)
+- [ ] Qdrant dense search + BM25, fused with reciprocal rank fusion
+- [ ] Cross-encoder reranking of the top results
+- [ ] `search_docs` tool with collections; every chunk carries a source id
+- [ ] `docker-compose.yml` with Qdrant; `make up` works
+- [ ] hit@5, MRR and nDCG reported on 40 labelled queries
+- [ ] Answers cite source ids

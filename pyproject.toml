@@ -8,12 +8,16 @@ requires-python = ">=3.12"
 dependencies = [
     "langchain-anthropic>=1.7.10",
     "langchain-core>=1.7.6",
+    "langgraph>=1.2.20",
     "pydantic>=2.14.3",
     "pydantic-settings>=2.16.2",
+    "rich>=15.0.0",
+    "tavily-python>=0.8.5",
+    "typer>=0.28.0",
 ]
 
 [project.scripts]
-goalsmith = "goalsmith:main"
+goalsmith = "goalsmith.cli:app"
 
 [build-system]
 requires = ["uv_build>=0.11.17,<0.12.0"]
@@ -46,10 +50,17 @@ select = [
     "RUF",
 ]
 
+[tool.ruff.lint.isort]
+known-first-party = ["goalsmith", "tests"]
+
 [tool.mypy]
 python_version = "3.12"
 strict = true
 files = ["src"]
+
+[[tool.mypy.overrides]]
+module = ["tavily", "tavily.*"]  # ships without type hints
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
