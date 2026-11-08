@@ -19,6 +19,25 @@ make setup                # install deps + pre-commit hooks
 make lint test            # ruff, mypy --strict, unit tests
 ```
 
+## Models
+
+Code never names a model. It asks for a **role**, and configuration picks the model:
+
+```python
+from goalsmith.llm import get_chat_model
+
+planner = get_chat_model("planner")  # claude-opus-5-5 by default
+```
+
+| Role | Used for | Default |
+|---|---|---|
+| `planner` | Breaking a goal into steps | `claude-opus-5-5` |
+| `worker` | Research, analysis, writing | `claude-sonnet-5-5` |
+| `router` | Cheap routing and guard checks | `claude-haiku-5-5` |
+| `judge` | Critic and eval scoring | `claude-opus-5-5` |
+
+Override any of them in `.env`, e.g. `GOALSMITH_WORKER__MODEL=claude-haiku-5-5`. See [.env.example](.env.example).
+
 ## Project layout
 
 | Path | What lives there |
@@ -33,7 +52,7 @@ make lint test            # ruff, mypy --strict, unit tests
 | | Milestone | Status |
 |---|---|---|
 | M0 | Skeleton: tooling, CI, docs | ✅ |
-| M1 | Model layer | ⏳ |
+| M1 | Model layer | ✅ |
 | M2 | Single agent and harness v1 | ⏳ |
 | M3 | RAG | ⏳ |
 | M4 | Checkpoints, human approval, memory | ⏳ |
