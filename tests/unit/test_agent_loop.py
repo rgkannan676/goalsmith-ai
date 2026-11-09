@@ -9,6 +9,7 @@ from goalsmith.harness.budget import Budget
 from goalsmith.harness.loop import AgentLoop
 from goalsmith.harness.permissions import AUTO_APPROVE
 from goalsmith.harness.tools import Tool, ToolContext, ToolRegistry
+from goalsmith.prompts import Prompt
 from tests.fixtures.fake_llm import FakeChatModel, text, tool_call
 
 
@@ -97,7 +98,12 @@ async def test_model_sees_system_prompt_goal_and_tools(
     registry: ToolRegistry, ctx: ToolContext
 ) -> None:
     model = FakeChatModel(responses=[text("ok")])
-    await AgentLoop(model, registry, ctx, system_prompt="You are a test agent.").run("Hello")
+    await AgentLoop(
+        model,
+        registry,
+        ctx,
+        system_prompt=Prompt(name="test", version=1, text="You are a test agent."),
+    ).run("Hello")
 
     first = model.calls[0]
     assert isinstance(first[0], SystemMessage)

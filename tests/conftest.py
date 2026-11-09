@@ -4,6 +4,8 @@ from typing import Any
 
 import pytest
 
+pytest_plugins = ["tests.fixtures.tracing"]  # the `spans` fixture
+
 _ENV_PREFIXES = ("GOALSMITH_",)
 _ENV_KEYS = {"ANTHROPIC_API_KEY", "TAVILY_API_KEY"}
 

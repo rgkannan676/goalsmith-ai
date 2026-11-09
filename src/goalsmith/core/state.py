@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from goalsmith.harness.budget import BudgetUsage
 from goalsmith.harness.permissions import ApprovalRequest
+from goalsmith.observability.usage import TokenUsage
 
 RunStatus = Literal["running", "awaiting_approval", "completed", "budget_exceeded"]
 
@@ -34,3 +35,7 @@ class RunResult(BaseModel):
     steps: int
     # Filled when status is "awaiting_approval": the tool calls waiting for a human.
     pending: list[ApprovalRequest] = Field(default_factory=list)
+    # Tokens and cost of every model call in the run so far (across resumes).
+    usage: TokenUsage = TokenUsage()
+    # The trace of the run (or resume) that produced this result, if tracing is on.
+    trace_id: str | None = None

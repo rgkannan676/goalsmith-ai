@@ -93,6 +93,45 @@ No Docker? Set `GOALSMITH_RAG__QDRANT_PATH=.qdrant` to run Qdrant inside the pro
 
 See [ADR 0005](docs/adr/0005-hybrid-retrieval.md) for the design and [evals/retrieval/report.md](evals/retrieval/report.md) for the full report.
 
+## Traces, tokens and cost
+
+Every run is traced with OpenTelemetry and sent to a self-hosted [Langfuse](https://langfuse.com):
+
+```bash
+make obs-up    # Langfuse at http://localhost:3000 (admin@goalsmith.local / goalsmith-local)
+```
+
+Then add the local keys to `.env` (see `.env.example`). Each run prints its usage and a link to its trace:
+
+```
+Usage: 3,884 in / 180 out tokens · $0.0096
+Trace: http://localhost:3000/project/goalsmith/traces/e167dcdd…
+```
+
+The trace shows the run as a tree:
+- every model call, with its messages, tokens, cost and prompt version;
+- every tool call, with its arguments and result (errors in red);
+- every approval request and decision.
+
+Log lines carry the same `run_id` and `trace_id` (`GOALSMITH_LOG_LEVEL=INFO`). Without Langfuse keys, tracing is off and costs nothing. See [ADR 0007](docs/adr/0007-tracing-prompts-evals.md) and [a worked diagnosis](docs/diagnosis/m5-unsupported-advice.md).
+
+## Prompts
+
+Prompts are versioned Markdown files in [`src/goalsmith/prompts/`](src/goalsmith/prompts/). Edit the text, bump `version`, and note the change in its `CHANGELOG.md`. Traces record the version, so you can compare runs before and after a prompt change.
+
+## Evals
+
+```bash
+make eval-smoke   # 6 golden tasks, about $0.07 and 20 seconds
+make eval-full    # all 15
+```
+
+Each golden task in [`evals/tasks/`](evals/tasks/) runs the real agent in a fresh workspace and is graded in two steps:
+1. **Deterministic checks.** For example: the answer says "18 weeks", cites a source, never calls `remember`.
+2. **An LLM judge.** It grades rubric criteria pass/fail, with a reason for each ("every fact is supported by a tool result").
+
+On every pull request, CI runs the smoke set and posts the results table as a comment. This needs an `ANTHROPIC_API_KEY` repository secret.
+
 ## Models
 
 Code never names a model. It asks for a **role**, and configuration picks the model:
@@ -118,7 +157,8 @@ Override any of them in `.env`, e.g. `GOALSMITH_WORKER__MODEL=claude-haiku-5-5`.
 |---|---|
 | `src/goalsmith/` | The Python package |
 | `tests/` | Unit tests (no network) and integration tests |
-| `evals/` | Eval datasets, e.g. the retrieval corpus and labelled queries |
+| `src/goalsmith/prompts/` | Versioned prompt files |
+| `evals/` | Golden tasks, rubrics, and the retrieval corpus and labelled queries |
 | `docs/` | Architecture, ADRs, milestone log, AI review log |
 | `CLAUDE.md` | Rules for working on this repo with Claude Code |
 
@@ -131,7 +171,7 @@ Override any of them in `.env`, e.g. `GOALSMITH_WORKER__MODEL=claude-haiku-5-5`.
 | M2 | Single agent and harness v1 | ✅ |
 | M3 | RAG | ✅ |
 | M4 | Checkpoints, human approval, memory | ✅ |
-| M5 | Tracing and eval v1 | ⏳ |
+| M5 | Tracing and eval v1 | ✅ |
 | M6–M16 | Multi-agent, MCP, skills, guardrails, API, deploy, showcase | ⏳ |
 
 ## License

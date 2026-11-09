@@ -1,0 +1,54 @@
+# Reading and writing files in the run workspace.
+
+- id: files-action-items
+  tags: [smoke, files]
+  goal: Read notes.md and write the action items, with their owners, to actions.md as a bullet list.
+  setup:
+    files:
+      notes.md: |
+        # Weekly sync, 3 November
+
+        Attendees: Priya, Tom, Ana
+
+        - The Q4 launch slipped one week because the sensor firmware failed QA.
+        - Tom will fix the firmware build and re-run QA by Friday.
+        - Ana will update the launch page with the new date.
+        - We discussed moving the team offsite to February; no decision yet.
+        - Priya will send the revised timeline to customers on Monday.
+  checks:
+    tools_called: [read_file, write_file]
+    files:
+      actions.md: [Tom, Ana, Priya, firmware]
+  rubric: file_task
+  criteria:
+    - actions.md lists exactly the three action items, not the undecided offsite discussion.
+
+- id: files-csv-summary
+  tags: [files]
+  goal: Read sales.csv and tell me the total revenue and which region sold the most.
+  setup:
+    files:
+      sales.csv: |
+        region,month,revenue_eur
+        North,September,12500
+        South,September,9800
+        North,October,14100
+        South,October,15300
+        West,October,7200
+  checks:
+    answer_contains: [["58,900", "58900", "58.900"], North]  # North 26,600 vs South 25,100
+    tools_called: [read_file]
+  criteria:
+    - The answer states the total and the top region, and they are consistent with the CSV.
+
+- id: files-docs-to-checklist
+  tags: [files, docs]
+  needs: [docs]
+  max_steps: 12
+  goal: >-
+    Using the employee handbook, write a short first-week checklist for a new hire
+    to checklist.md, covering their laptop, home office allowance and how to claim expenses.
+  checks:
+    files:
+      checklist.md: [laptop, "600", "EX-12"]
+  rubric: file_task

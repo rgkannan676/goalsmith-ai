@@ -10,7 +10,8 @@ The current milestone and its acceptance criteria are in docs/milestones.md.
 - Lint/format/types: `make lint` (ruff check, ruff format --check, mypy src)
 - Unit tests: `uv run pytest -m "not integration"` (or `make test`)
 - Integration: `make up` then `uv run pytest -m integration`
-- Evals: `make eval-smoke`
+- Evals: `make eval-smoke` (6 golden tasks, real model calls) or `make eval-full`
+- Tracing UI: `make obs-up` (Langfuse at http://localhost:3000)
 - Run an agent: `uv run goalsmith run "<goal>" [--max-steps N] [--run-id NAME] [--yes]`
 - Resume a paused run: `uv run goalsmith resume <run_id>` (needs Postgres: `make up`)
 - Documents: `uv run goalsmith ingest <files or folders> [-c COLLECTION]`, `uv run goalsmith search "<q>"`
@@ -28,6 +29,8 @@ The current milestone and its acceptance criteria are in docs/milestones.md.
   Build them as `Tool(...)` factories (see capabilities/tools/files.py) and register them in a ToolRegistry.
 - Tools raise ToolError for expected failures; the registry turns every error into a ToolMessage.
 - New skills live in skills/<name>/SKILL.md with name + description front matter.
+- Prompts live in src/goalsmith/prompts/<name>.md. Bump `version` on every text change and log it in prompts/CHANGELOG.md.
+- Log with observability.logs.get_logger: an event name plus fields, never secrets or full prompts.
 
 ## Code style
 - Python 3.12, type hints everywhere, mypy strict on src/.

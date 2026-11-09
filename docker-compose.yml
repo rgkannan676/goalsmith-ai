@@ -1,6 +1,49 @@
 # Local services. Start with `make up`, stop with `make down`.
-# Later milestones add Langfuse (M5) and Redis (M13).
+# `make obs-up` also starts Langfuse (tracing, M5): a heavier stack, so it sits in
+# the "observability" profile and is off by default. M13 adds Redis for jobs.
 # Ports are bound to 127.0.0.1 so the services are not reachable from your network.
+# Every password below is a local-dev default; override them in .env for anything shared.
+
+x-langfuse-env: &langfuse-env
+  DATABASE_URL: postgresql://langfuse:${LANGFUSE_DB_PASSWORD:-langfuse}@langfuse-postgres:5432/langfuse
+  NEXTAUTH_URL: http://localhost:3000
+  SALT: ${LANGFUSE_SALT:-goalsmith-local-salt}
+  # 64 hex characters. Generate a real one with `openssl rand -hex 32`.
+  ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:-0000000000000000000000000000000000000000000000000000000000000000}
+  TELEMETRY_ENABLED: "false"
+  CLICKHOUSE_MIGRATION_URL: clickhouse://langfuse-clickhouse:9000
+  CLICKHOUSE_URL: http://langfuse-clickhouse:8123
+  CLICKHOUSE_USER: clickhouse
+  CLICKHOUSE_PASSWORD: ${LANGFUSE_CLICKHOUSE_PASSWORD:-clickhouse}
+  CLICKHOUSE_CLUSTER_ENABLED: "false"
+  REDIS_HOST: langfuse-redis
+  REDIS_PORT: "6379"
+  REDIS_AUTH: ${LANGFUSE_REDIS_PASSWORD:-langfuse}
+  LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+  LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+  LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: minio
+  LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_MINIO_PASSWORD:-miniosecret}
+  LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://langfuse-minio:9000
+  LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+  LANGFUSE_S3_EVENT_UPLOAD_PREFIX: events/
+  LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
+  LANGFUSE_S3_MEDIA_UPLOAD_REGION: auto
+  LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: minio
+  LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_MINIO_PASSWORD:-miniosecret}
+  LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://localhost:9090
+  LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
+  LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: media/
+
+x-langfuse-depends: &langfuse-depends
+  langfuse-postgres:
+    condition: service_healthy
+  langfuse-clickhouse:
+    condition: service_healthy
+  langfuse-redis:
+    condition: service_healthy
+  langfuse-minio:
+    condition: service_healthy
+
 services:
   qdrant:
     image: qdrant/qdrant:v1.20.0  # keep the minor version in step with qdrant-client
@@ -33,6 +76,112 @@ services:
       timeout: 3s
       retries: 12
 
+  # --- Langfuse: traces of every run (profile "observability", `make obs-up`) ----------
+  # A trimmed copy of https://github.com/langfuse/langfuse/blob/main/docker-compose.yml.
+  # UI: http://localhost:3000 (login below). On first start Langfuse creates the
+  # "goalsmith" project with the keys that .env.example uses.
+  langfuse-web:
+    image: docker.langfuse.com/langfuse/langfuse:4.76.0  # web and worker must match
+    profiles: [observability]
+    depends_on: *langfuse-depends
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      <<: *langfuse-env
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-goalsmith-local-nextauth}
+      LANGFUSE_S3_MEDIA_UPLOAD_INTERNAL_ENDPOINT: http://langfuse-minio:9000
+      AUTH_DISABLE_SIGNUP: "true"
+      LANGFUSE_INIT_ORG_ID: goalsmith
+      LANGFUSE_INIT_ORG_NAME: Goalsmith
+      LANGFUSE_INIT_PROJECT_ID: goalsmith
+      LANGFUSE_INIT_PROJECT_NAME: goalsmith
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${GOALSMITH_LANGFUSE__PUBLIC_KEY:-pk-lf-goalsmith-local}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${GOALSMITH_LANGFUSE__SECRET_KEY:-sk-lf-goalsmith-local}
+      LANGFUSE_INIT_USER_EMAIL: ${LANGFUSE_ADMIN_EMAIL:-admin@goalsmith.local}
+      LANGFUSE_INIT_USER_NAME: admin
+      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_ADMIN_PASSWORD:-goalsmith-local}
+    healthcheck:
+      # The web app listens on the container's hostname, not on 127.0.0.1.
+      test: ["CMD-SHELL", "wget -qO- http://$${HOSTNAME}:3000/api/public/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 36  # the first start runs database migrations
+
+  langfuse-worker:
+    image: docker.langfuse.com/langfuse/langfuse-worker:4.76.0
+    profiles: [observability]
+    depends_on: *langfuse-depends
+    environment: *langfuse-env
+
+  langfuse-postgres:
+    image: postgres:17.7  # Langfuse's own database, separate from the app's
+    profiles: [observability]
+    environment:
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: ${LANGFUSE_DB_PASSWORD:-langfuse}
+      POSTGRES_DB: langfuse
+    volumes:
+      - langfuse_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse -d langfuse"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  langfuse-clickhouse:
+    image: clickhouse/clickhouse-server:26.3.62.3  # stores traces and observations
+    profiles: [observability]
+    user: "101:101"
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: ${LANGFUSE_CLICKHOUSE_PASSWORD:-clickhouse}
+    volumes:
+      - langfuse_clickhouse_data:/var/lib/clickhouse
+      - langfuse_clickhouse_logs:/var/log/clickhouse-server
+    healthcheck:
+      test: wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  langfuse-redis:
+    image: redis:7.4.7  # Langfuse's job queue
+    profiles: [observability]
+    command: --requirepass ${LANGFUSE_REDIS_PASSWORD:-langfuse} --maxmemory-policy noeviction
+    volumes:
+      - langfuse_redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli --no-auth-warning -a ${LANGFUSE_REDIS_PASSWORD:-langfuse} ping"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+
+  langfuse-minio:
+    # S3-compatible storage for raw events. Chainguard publishes only `latest`,
+    # so the image is pinned by digest.
+    image: cgr.dev/chainguard/minio@sha256:616286de6ef3a1892876b126e745e152d8e03add6357203f8a1f854bdd1dce76
+    profiles: [observability]
+    entrypoint: sh
+    command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" --console-address ":9001" /data'
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: ${LANGFUSE_MINIO_PASSWORD:-miniosecret}
+    ports:
+      - "127.0.0.1:9090:9000"  # media uploads from the browser
+    volumes:
+      - langfuse_minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 2s
+      timeout: 5s
+      retries: 20
+
 volumes:
   qdrant_data:
   postgres_data:
+  langfuse_postgres_data:
+  langfuse_clickhouse_data:
+  langfuse_clickhouse_logs:
+  langfuse_redis_data:
+  langfuse_minio_data:

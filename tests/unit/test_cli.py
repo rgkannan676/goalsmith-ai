@@ -4,16 +4,19 @@ from pathlib import Path
 
 import pytest
 from langgraph.checkpoint.memory import InMemorySaver
+from pydantic import SecretStr
 from qdrant_client.http.exceptions import ResponseHandlingException
 from typer.testing import CliRunner
 
 from goalsmith import cli
 from goalsmith.capabilities.rag.store import DocStore
-from goalsmith.config import RagSettings, Settings
+from goalsmith.config import LangfuseSettings, RagSettings, Settings
 from goalsmith.core.persistence import Persistence
 from goalsmith.memory.store import in_memory_store
-from tests.fixtures.fake_llm import FakeChatModel, text, tool_call
+from goalsmith.observability.tracing import Tracing
+from tests.fixtures.fake_llm import FakeChatModel, text, tool_call, with_usage
 from tests.fixtures.fake_rag import HashEmbeddings
+from tests.fixtures.tracing import Spans, attr
 
 runner = CliRunner()
 
@@ -255,3 +258,28 @@ def test_run_id_cannot_be_reused(
     again = runner.invoke(cli.app, ["run", "Hi", "--run-id", "t13"])
     assert again.exit_code == 1
     assert "already exists" in again.output
+
+
+def test_run_prints_usage_and_trace_link(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch, spans: Spans
+) -> None:
+    traced = settings.model_copy(
+        update={"langfuse": LangfuseSettings(public_key="pk", secret_key=SecretStr("sk"))}
+    )
+    monkeypatch.setattr(cli, "get_settings", lambda: traced)
+    # The test tracer provider is already installed; don't send anything to Langfuse.
+    monkeypatch.setattr(cli, "setup_tracing", lambda s: Tracing(provider=None))
+    reply = with_usage(text("Hi."), 1000, 100, model="claude-sonnet-5-5")
+    use_model(monkeypatch, FakeChatModel(responses=[reply]))
+
+    result = runner.invoke(cli.app, ["run", "Say hi", "--run-id", "t9"])
+
+    assert result.exit_code == 0, result.output
+    assert "1,000 in / 100 out tokens · $0.0030" in result.output  # 1000x$2 + 100x$10 per M
+    root = spans.one("goalsmith run")
+    trace_id = format(root.context.trace_id, "032x")
+    assert f"Trace: http://localhost:3000/project/goalsmith/traces/{trace_id}" in result.output
+    run = spans.one("agent.run")
+    assert run.parent is not None and run.parent.span_id == root.context.span_id
+    assert attr(run, "langfuse.trace.name") == "goalsmith run"  # outermost name wins
+    assert attr(run, "langfuse.user.id") == "local"

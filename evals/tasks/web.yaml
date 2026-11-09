@@ -1,0 +1,10 @@
+# Needs TAVILY_API_KEY; skipped without it.
+
+- id: web-cited-fact
+  tags: [web]
+  needs: [web]
+  goal: What is the latest stable release of Python 3, and on what date was it released? Cite your source.
+  checks:
+    answer_contains: [["http://", "https://"]]
+    tools_called: [web_search]
+  rubric: grounded_answer
