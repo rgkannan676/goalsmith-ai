@@ -12,10 +12,11 @@ fastembed (ONNX on the CPU): no API key, no cost, and they work offline once
 downloaded.
 """
 
+import os
 import threading
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from langchain_anthropic import ChatAnthropic
 from langchain_core.embeddings import Embeddings
@@ -24,6 +25,7 @@ from pydantic import BaseModel
 
 from goalsmith.capabilities.rag.rerank import Reranker
 from goalsmith.config import ModelSpec, Role, Settings, get_settings
+from goalsmith.observability.tracing import ModelCallTracer
 
 if TYPE_CHECKING:
     from fastembed import TextEmbedding
@@ -41,6 +43,10 @@ def _build_anthropic(spec: ModelSpec, settings: Settings) -> BaseChatModel:
         raise LLMConfigError(
             "ANTHROPIC_API_KEY is not set. Copy .env.example to .env and add your key."
         )
+    # The Anthropic SDK traces its own requests when a tracer provider is installed.
+    # ModelCallTracer already records every model call (for any provider), so the
+    # SDK's spans would count each call twice. Set the variable to "true" to keep both.
+    os.environ.setdefault("ANTHROPIC_OPEN_TELEMETRY", "false")
     # model_validate takes the documented parameter names. Calling ChatAnthropic(...)
     # directly trips mypy on LangChain's field aliases.
     return ChatAnthropic.model_validate(
@@ -68,7 +74,10 @@ def known_providers() -> list[str]:
 
 
 def get_chat_model(role: Role, settings: Settings | None = None) -> BaseChatModel:
-    """Build the chat model configured for `role`."""
+    """Build the chat model configured for `role`.
+
+    Every call it makes is traced (model, messages, tokens, cost) by ModelCallTracer.
+    """
     settings = settings or get_settings()
     spec = settings.model_for(role)
     builder = _PROVIDERS.get(spec.provider)
@@ -77,7 +86,9 @@ def get_chat_model(role: Role, settings: Settings | None = None) -> BaseChatMode
             f"Unknown provider {spec.provider!r} for role {role!r}. "
             f"Known providers: {', '.join(known_providers())}"
         )
-    return builder(spec, settings)
+    model = builder(spec, settings)
+    model.callbacks = [ModelCallTracer(settings.prices)]
+    return model
 
 
 async def generate_structured[SchemaT: BaseModel](
@@ -87,10 +98,20 @@ async def generate_structured[SchemaT: BaseModel](
 
     Raises pydantic.ValidationError (a ValueError) if the model's output does not fit.
     """
-    result = await model.with_structured_output(schema).ainvoke(messages)
+    result = await model.with_structured_output(schema, **_structured_kwargs(model)).ainvoke(
+        messages
+    )
     if isinstance(result, schema):
         return result
     return schema.model_validate(result)
+
+
+def _structured_kwargs(model: BaseChatModel) -> dict[str, Any]:
+    """Claude has native structured output (a JSON schema the reply must match).
+    LangChain's default, forcing a tool call, is rejected by current Claude models."""
+    if isinstance(model, ChatAnthropic):
+        return {"method": "json_schema"}
+    return {}
 
 
 # --- local models for document search -----------------------------------------------

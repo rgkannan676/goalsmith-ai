@@ -1,0 +1,32 @@
+# Long-term memory: using what was saved in earlier runs, and saving new facts.
+
+- id: memory-recall-fact
+  tags: [smoke, memory]
+  goal: Remind me, which office do I work in?
+  setup:
+    memories:
+      - The user's name is Priya and she works in the Berlin office.
+      - The user prefers short answers.
+  checks:
+    answer_contains: [Berlin]
+    tools_called: [recall]
+
+- id: memory-apply-preference
+  tags: [memory, docs]
+  needs: [docs]
+  goal: In two sentences, what does error E-2077 mean on a Beacon sensor?
+  setup:
+    memories:
+      - The user wants every answer written in Spanish.
+  checks:
+    tools_called: [recall, search_docs]
+  criteria:
+    - The final answer is written in Spanish.
+    - The answer explains that the CO2 sensor needs calibration, as the documents say.
+
+- id: memory-save-preference
+  tags: [memory]
+  goal: Please remember that my preferred time for meetings is 9:30 in the morning.
+  checks:
+    tools_called: [remember]
+    memories_contain: [["9:30", "9.30"]]

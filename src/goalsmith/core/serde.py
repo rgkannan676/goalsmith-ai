@@ -10,6 +10,7 @@ from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 
 CHECKPOINT_TYPES: list[tuple[str, str]] = [
     ("goalsmith.harness.budget", "BudgetUsage"),
+    ("goalsmith.observability.usage", "TokenUsage"),
 ]
 
 

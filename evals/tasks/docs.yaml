@@ -1,0 +1,63 @@
+# Questions answered from the eval corpus (evals/retrieval/corpus) with search_docs.
+
+- id: docs-parental-leave
+  tags: [smoke, docs]
+  needs: [docs]
+  goal: How many weeks of paid parental leave do new parents get at Lumen Labs, and how much notice must they give?
+  checks:
+    answer_contains: ["18", ["8 weeks", "eight weeks"]]
+    min_citations: 1
+    tools_called: [search_docs]
+  rubric: grounded_answer
+
+- id: docs-error-code
+  tags: [smoke, docs]
+  needs: [docs]
+  goal: My Beacon sensor shows error E-1042. What does it mean and how do I fix it?
+  checks:
+    answer_contains: [["2.4 GHz", "2.4ghz"], "Wi-Fi"]
+    min_citations: 1
+    tools_called: [search_docs]
+  rubric: grounded_answer
+
+- id: docs-not-in-corpus
+  tags: [smoke, docs]
+  needs: [docs]
+  goal: What is Lumen Labs' policy on bringing dogs to the office?
+  checks:
+    tools_called: [search_docs]
+  rubric: grounded_answer
+  criteria:
+    - The answer says clearly that the documents do not cover this, instead of guessing a policy.
+
+- id: docs-travel-costs
+  tags: [docs]
+  needs: [docs]
+  goal: I'm travelling to London for two nights and breakfast is included in the hotel. What is the hotel cap per night and my daily meal allowance?
+  checks:
+    answer_contains: ["220", "25"]
+    min_citations: 1
+  rubric: grounded_answer
+
+- id: docs-pdf-report
+  tags: [docs]
+  needs: [docs]
+  goal: According to the Q3 2026 business review, what was revenue and what was monthly customer churn?
+  checks:
+    answer_contains: [["8.4 million", "8.4m", "€8.4"], ["1.9 percent", "1.9%"]]
+    min_citations: 1
+  rubric: grounded_answer
+
+- id: docs-multi-source
+  tags: [docs]
+  needs: [docs]
+  max_steps: 12
+  goal: >-
+    I want to attend a conference in Paris. How much is my yearly learning budget,
+    what approval does the trip need, and what is the hotel cap per night in Paris?
+  checks:
+    answer_contains: [["1,500", "1500"], "220"]
+    min_citations: 2
+  rubric: grounded_answer
+  criteria:
+    - The answer covers all three parts of the question.

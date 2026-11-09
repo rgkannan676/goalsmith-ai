@@ -2,8 +2,8 @@
 
 import asyncio
 import json
-from collections.abc import AsyncIterator, Coroutine
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Coroutine, Iterator
+from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any
@@ -38,6 +38,9 @@ from goalsmith.harness.permissions import ApprovalRequest, Decision, Permissions
 from goalsmith.harness.tools import Tool, ToolContext, ToolRegistry
 from goalsmith.llm import LLMConfigError, get_chat_model, get_embeddings, get_reranker
 from goalsmith.memory.store import Memory, MemoryStoreError
+from goalsmith.observability.logs import configure_logging
+from goalsmith.observability.spans import observation, trace_attributes
+from goalsmith.observability.tracing import setup_tracing, trace_url
 
 app = typer.Typer(help="Goalsmith: from goal to done.", no_args_is_help=True)
 console = Console()
@@ -94,10 +97,11 @@ def run(
     budget = Budget(max_steps=max_steps or settings.max_steps)
 
     console.print(f"[bold]Run[/bold] {context.run_id}  ·  budget {budget.max_steps} steps")
-    result = _run_session(
-        _start(goal, model, context, budget, settings, auto_approve=yes), settings
-    )
-    _finish(result, context)
+    with _observed(settings, "goalsmith run", context.run_id, goal):
+        result = _run_session(
+            _start(goal, model, context, budget, settings, auto_approve=yes), settings
+        )
+        _finish(result, context, settings)
 
 
 @app.command()
@@ -113,8 +117,31 @@ def resume(
     budget = Budget(max_steps=max_steps or settings.max_steps)
 
     console.print(f"[bold]Resume[/bold] {run_id}")
-    result = _run_session(_continue(model, context, budget, settings, auto_approve=yes), settings)
-    _finish(result, context)
+    with _observed(settings, "goalsmith resume", run_id, run_id):
+        result = _run_session(
+            _continue(model, context, budget, settings, auto_approve=yes), settings
+        )
+        _finish(result, context, settings)
+
+
+@contextmanager
+def _observed(settings: Settings, name: str, run_id: str, input: str) -> Iterator[None]:
+    """Logs, and one trace for the whole command (run plus any approvals).
+
+    Spans are sent in batches, so `shutdown()` flushes the last ones before exit.
+    """
+    configure_logging(settings.log_level, settings.log_format)
+    tracing = setup_tracing(settings)
+    if tracing.warning:
+        _warn(tracing.warning)
+    try:
+        with (
+            trace_attributes(name=name, session_id=run_id, user_id=settings.user_id, tags=["cli"]),
+            observation(name, input=input),
+        ):
+            yield
+    finally:
+        tracing.shutdown()
 
 
 async def _start(
@@ -181,6 +208,7 @@ async def _open_session(
             budget=budget,
             permissions=Permissions(needs_approval=settings.approval_risks),
             checkpointer=saved.checkpointer,
+            prices=settings.prices,
         )
         yield loop, saved.durable
 
@@ -243,9 +271,13 @@ def _prompt_args(current: dict[str, Any]) -> dict[str, Any]:
         console.print('[red]Expected a JSON object, e.g. {"path": "notes.md"}[/red]')
 
 
-def _finish(result: RunResult, context: ToolContext) -> None:
+def _finish(result: RunResult, context: ToolContext, settings: Settings) -> None:
     console.print(Panel(Markdown(result.answer), title=f"{result.status} · {result.steps} steps"))
+    console.print(f"Usage: {result.usage.summary()}")
     console.print(f"Workspace: {context.workspace}")
+    if settings.langfuse.enabled and result.trace_id:
+        # soft_wrap keeps the link on one line, so terminals can open it.
+        console.print(f"Trace: {trace_url(settings, result.trace_id)}", soft_wrap=True)
     if result.status == "budget_exceeded":
         raise typer.Exit(EXIT_BUDGET_EXCEEDED)
 

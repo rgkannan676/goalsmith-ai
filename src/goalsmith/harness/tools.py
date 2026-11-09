@@ -8,10 +8,12 @@ A model asks for a tool by name with JSON arguments. The registry:
 5. turns the result, or any error, into a ToolMessage for the model.
 
 A tool error is information for the model, not a crash for the user.
+
+Each call is traced as a "tool" span (arguments, result, error status) and logged.
 """
 
 import asyncio
-import logging
+import time
 from collections.abc import Awaitable, Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -20,7 +22,10 @@ from typing import Any, Literal
 from langchain_core.messages import ToolCall, ToolMessage
 from pydantic import BaseModel, ValidationError
 
-logger = logging.getLogger(__name__)
+from goalsmith.observability.logs import get_logger
+from goalsmith.observability.spans import mark_error, observation, set_output
+
+log = get_logger(__name__)
 
 Risk = Literal["read", "write", "external"]
 """read: no side effects. write: changes the run's own workspace.
@@ -89,6 +94,26 @@ class ToolRegistry:
 
     async def execute(self, call: ToolCall, ctx: ToolContext) -> ToolMessage:
         name = call["name"]
+        started = time.perf_counter()
+        with observation(
+            f"tool {name}", "tool", input=call["args"], metadata={"call_id": call.get("id")}
+        ) as span:
+            message = await self._execute(call, ctx)
+            content = str(message.content)
+            set_output(span, content)
+            if message.status == "error":
+                mark_error(span, content)
+        log.info(
+            "tool.finished",
+            tool=name,
+            call_id=call.get("id"),
+            status=message.status,
+            ms=round((time.perf_counter() - started) * 1000),
+        )
+        return message
+
+    async def _execute(self, call: ToolCall, ctx: ToolContext) -> ToolMessage:
+        name = call["name"]
         call_id = call.get("id") or ""
 
         def reply(content: str, status: Literal["success", "error"] = "success") -> ToolMessage:
@@ -118,7 +143,7 @@ class ToolRegistry:
         except ToolError as exc:
             return reply(f"Error: {exc}", "error")
         except Exception as exc:  # any bug in a tool must not crash the run
-            logger.exception("Tool %r crashed", name)
+            log.exception("tool.crashed", tool=name, call_id=call_id)
             return reply(
                 f"Error: {name!r} failed unexpectedly ({type(exc).__name__}: {exc})", "error"
             )

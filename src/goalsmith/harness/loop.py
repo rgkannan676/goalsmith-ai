@@ -9,9 +9,14 @@
   rejects each risky call. The paused state lives in the checkpointer, so the run
   can be resumed later, even by a different process.
 - `tools` runs every tool call that has not been answered yet, through the registry.
+
+Observability: each `run()` / `resume()` is an "agent" span. Model calls (traced by
+the model's callback, see observability/tracing.py) and tool calls nest inside it.
+All spans of one run share the session id = run id, so Langfuse groups a run that
+was paused and resumed. Tokens and cost add up in the run state.
 """
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Coroutine, Mapping
 from typing import Any, cast
 
 from langchain_core.language_models import BaseChatModel
@@ -23,6 +28,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command, interrupt
 
+from goalsmith.config import ModelPrice
 from goalsmith.core.serde import checkpoint_serializer
 from goalsmith.core.state import RunResult, RunState
 from goalsmith.harness.budget import Budget, BudgetUsage
@@ -38,19 +44,20 @@ from goalsmith.harness.permissions import (
     pending_requests,
 )
 from goalsmith.harness.tools import ToolContext, ToolRegistry
+from goalsmith.observability.logs import bind_run, get_logger
+from goalsmith.observability.spans import (
+    current_trace_id,
+    event,
+    mark_warning,
+    observation,
+    set_metadata,
+    set_output,
+    trace_attributes,
+)
+from goalsmith.observability.usage import usage_from_message
+from goalsmith.prompts import Prompt, load_prompt
 
-# Moves to versioned templates in prompts/ in M5, when prompt versions are traced.
-DEFAULT_SYSTEM_PROMPT = """\
-You are Goalsmith, an agent that completes the user's goal using the tools provided.
-- Think briefly about what is needed, then act. Use tools instead of guessing facts.
-- Files you write go into the run workspace. Use relative paths.
-- When you rely on a web result, cite its URL.
-- When you rely on a document passage, cite its source id in brackets, e.g. [handbook.md#3].
-- If recall is available and the user's preferences may matter, check it first.
-  Use remember only for durable facts or preferences the user would want kept.
-- Some actions need the user's approval. If one is rejected, do not retry it;
-  change your approach or explain what you need.
-- When the goal is done, reply with the final answer and no tool calls."""
+log = get_logger(__name__)
 
 OnUpdate = Callable[[str, dict[str, Any]], None]
 """Called after each node with (node name, the partial update it returned)."""
@@ -70,7 +77,8 @@ class AgentLoop:
         budget: Budget | None = None,
         permissions: Permissions | None = None,
         checkpointer: BaseCheckpointSaver[Any] | None = None,
-        system_prompt: str = DEFAULT_SYSTEM_PROMPT,
+        system_prompt: Prompt | None = None,
+        prices: Mapping[str, ModelPrice] | None = None,
     ) -> None:
         # bind_tools tells the model which tools exist and what arguments they take.
         self._model = model.bind_tools(registry.schemas())
@@ -78,7 +86,9 @@ class AgentLoop:
         self._context = context
         self._budget = budget or Budget()
         self._permissions = permissions or Permissions()
-        self._system_prompt = system_prompt
+        # A versioned prompt (prompts/agent_system.md); its version goes on every trace.
+        self._prompt = system_prompt or load_prompt("agent_system")
+        self._prices = prices or {}
         # A checkpointer saves the state after every node. Pausing for approval needs
         # one; the in-memory saver lasts only as long as this process.
         self.graph = self._build_graph(checkpointer or InMemorySaver(serde=checkpoint_serializer()))
@@ -103,10 +113,9 @@ class AgentLoop:
         if self._budget.exhausted_by(usage):
             return {"status": "budget_exceeded", "answer": self._partial_answer(state)}
 
-        response = await self._model.ainvoke(
-            [SystemMessage(self._system_prompt), *state["messages"]]
-        )
-        update: dict[str, Any] = {"messages": [response], "budget": usage.add_step()}
+        response = await self._model.ainvoke([SystemMessage(self._prompt.text), *state["messages"]])
+        tokens = usage_from_message(response, self._prices)
+        update: dict[str, Any] = {"messages": [response], "budget": usage.add_step(tokens)}
         if not response.tool_calls:
             update |= {"status": "completed", "answer": response.text}
         return update
@@ -154,7 +163,7 @@ class AgentLoop:
             "status": "running",
             "answer": None,
         }
-        return await self._stream(initial, config, on_update)
+        return await self._traced("agent.run", goal, self._stream(initial, config, on_update))
 
     async def resume(
         self, decisions: Mapping[str, Decision], on_update: OnUpdate | None = None
@@ -167,7 +176,22 @@ class AgentLoop:
         if missing:
             raise ValueError(f"No decision for tool call(s): {', '.join(missing)}")
         resume_value = {call_id: d.model_dump(mode="json") for call_id, d in decisions.items()}
+        return await self._traced(
+            "agent.resume", resume_value, self._continue(resume_value, on_update)
+        )
+
+    async def _continue(
+        self, resume_value: dict[str, Any], on_update: OnUpdate | None
+    ) -> RunResult:
+        event("approval.decided", input=resume_value)
+        for call_id, decision in resume_value.items():
+            log.info("approval.decided", call_id=call_id, action=decision["action"])
         return await self._stream(Command(resume=resume_value), self._config(), on_update)
+
+    async def messages(self) -> list[AnyMessage]:
+        """The run's full message history (goal, model replies, tool results)."""
+        snapshot = await self.graph.aget_state(self._config())
+        return list(snapshot.values.get("messages", []))
 
     async def pending(self) -> list[ApprovalRequest]:
         """The approval requests this run is paused on (empty if it is not paused)."""
@@ -201,15 +225,52 @@ class AgentLoop:
             answer=state["answer"] or "",
             steps=state["budget"].steps,
             pending=pending,
+            usage=state["budget"].tokens,
+            trace_id=current_trace_id(),
         )
+
+    async def _traced(
+        self, name: str, input: Any, work: Coroutine[Any, Any, RunResult]
+    ) -> RunResult:
+        """Run `work` inside an "agent" span, and record how it ended.
+
+        This is outside the graph nodes, so none of it repeats when a run resumes.
+        """
+        run_id = self._context.run_id
+        with (
+            bind_run(run_id),
+            trace_attributes(name=name, session_id=run_id, metadata=self._prompt.trace_metadata()),
+            observation(name, "agent", input=input, metadata={"prompt": self._prompt.ref}) as span,
+        ):
+            result = await work
+            set_output(span, result.answer or [r.model_dump() for r in result.pending])
+            fields = {
+                "status": result.status,
+                "steps": result.steps,
+                "input_tokens": result.usage.input_tokens,
+                "output_tokens": result.usage.output_tokens,
+                "cost_usd": round(result.usage.cost_usd, 6),
+            }
+            set_metadata(span, **fields)
+            if result.status == "awaiting_approval":
+                event("approval.requested", input=[r.model_dump() for r in result.pending])
+                for request in result.pending:
+                    log.info("approval.requested", tool=request.tool, call_id=request.call_id)
+            elif result.status == "budget_exceeded":
+                mark_warning(span, "Stopped at the step budget")
+            paused = result.status == "awaiting_approval"
+            log.info("run.paused" if paused else "run.finished", **fields)
+            return result
 
     def _config(self) -> RunnableConfig:
         # thread_id is the checkpointer's key for this run's saved state.
         # A step is up to three graph hops (agent, approval, tools). This LangGraph
         # limit is a backstop; our own budget should always stop the run first.
+        # metadata reaches every model call's callbacks, so model spans show the prompt.
         return {
             "configurable": {"thread_id": self._context.run_id},
             "recursion_limit": 3 * self._budget.max_steps + 5,
+            "metadata": self._prompt.trace_metadata(),
         }
 
     def _partial_answer(self, state: RunState) -> str:

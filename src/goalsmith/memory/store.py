@@ -45,6 +45,17 @@ class Memory:
         created = item.created_at.isoformat() if item else ""
         return MemoryItem(id=key, text=text, created_at=created)
 
+    async def all(self, limit: int = 100) -> list[MemoryItem]:
+        """Every memory (up to `limit`), newest first: no query, so no ranking."""
+        results = await self._store.asearch(self.namespace, limit=limit)
+        items = [
+            MemoryItem(
+                id=r.key, text=str(r.value.get("text", "")), created_at=r.created_at.isoformat()
+            )
+            for r in results
+        ]
+        return sorted(items, key=lambda item: item.created_at, reverse=True)
+
     async def recall(self, query: str, k: int = 5) -> list[MemoryItem]:
         results = await self._store.asearch(self.namespace, query=query, limit=k)
         return [

@@ -33,6 +33,64 @@ jobs:
       - name: Unit tests
         run: uv run pytest -m "not integration"
 
+  # Golden-task smoke eval against the real model, reported as a PR comment.
+  # Needs the ANTHROPIC_API_KEY repository secret (Settings > Secrets and variables >
+  # Actions). Fork PRs get no secrets, so there the eval is skipped, not failed.
+  eval-smoke:
+    needs: lint-and-test
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write  # to post the results comment
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Cache embedding and reranker models
+        uses: actions/cache@v4
+        with:
+          path: .cache/fastembed
+          key: fastembed-${{ hashFiles('src/goalsmith/config.py') }}
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Run smoke eval
+        id: eval
+        if: env.ANTHROPIC_API_KEY != ''
+        continue-on-error: true  # post the table first, then fail the job below
+        run: make eval-smoke
+
+      - name: Note a skipped eval
+        if: env.ANTHROPIC_API_KEY == ''
+        run: |
+          mkdir -p evals/results
+          {
+            echo "## Goalsmith eval: smoke"
+            echo
+            echo "⏭️ Skipped: the ANTHROPIC_API_KEY secret is not available to this run."
+          } > evals/results/smoke.md
+
+      - name: Post results on the PR
+        if: always() && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat evals/results/smoke.md >> "$GITHUB_STEP_SUMMARY"
+          gh pr comment "${{ github.event.pull_request.number }}" \
+            --body-file evals/results/smoke.md --edit-last --create-if-none
+
+      - name: Fail below the pass-rate threshold
+        if: steps.eval.outcome == 'failure'
+        run: exit 1
+
   secret-scan:
     runs-on: ubuntu-latest
     steps:

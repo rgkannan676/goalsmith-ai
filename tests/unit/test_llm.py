@@ -1,3 +1,4 @@
+import os
 import socket
 
 import pytest
@@ -8,6 +9,7 @@ from pydantic import BaseModel
 from goalsmith import llm
 from goalsmith.config import ModelSpec, RagSettings, Settings
 from goalsmith.llm import FastEmbedEmbeddings, FastEmbedReranker, get_embeddings, get_reranker
+from goalsmith.observability.tracing import ModelCallTracer
 from tests.fixtures.fake_llm import FakeChatModel, structured, text, tool_call
 
 
@@ -141,3 +143,20 @@ def test_embeddings_and_reranker_come_from_settings() -> None:
 def test_reranker_can_be_turned_off() -> None:
     settings = Settings(_env_file=None, rag=RagSettings(rerank_model=None))
     assert get_reranker(settings) is None
+
+
+def test_model_calls_are_traced_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Our callback traces every model call; the Anthropic SDK's own spans are off."""
+    monkeypatch.delenv("ANTHROPIC_OPEN_TELEMETRY", raising=False)
+    settings = make_settings(monkeypatch, ANTHROPIC_API_KEY="sk-test")
+    model = llm.get_chat_model("worker", settings)
+    assert any(isinstance(cb, ModelCallTracer) for cb in model.callbacks or [])  # type: ignore[union-attr]
+    assert os.environ["ANTHROPIC_OPEN_TELEMETRY"] == "false"
+
+
+def test_claude_uses_native_structured_output(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = make_settings(monkeypatch, ANTHROPIC_API_KEY="sk-test")
+    assert llm._structured_kwargs(llm.get_chat_model("judge", settings)) == {
+        "method": "json_schema"
+    }
+    assert llm._structured_kwargs(FakeChatModel(responses=[])) == {}

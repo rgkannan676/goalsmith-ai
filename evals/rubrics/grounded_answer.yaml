@@ -1,0 +1,6 @@
+name: grounded_answer
+description: Answers a question from documents or the web, with citations.
+criteria:
+  - The final answer directly answers the question that was asked.
+  - Every fact in the final answer is supported by a tool result shown in the record; nothing is invented.
+  - Facts are cited with their source, a document's source id in brackets (e.g. [handbook.md#3]) or a web page's URL.

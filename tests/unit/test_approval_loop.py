@@ -13,6 +13,7 @@ from goalsmith.harness.budget import Budget, BudgetUsage
 from goalsmith.harness.loop import AgentLoop, RunStateError
 from goalsmith.harness.permissions import Decision
 from goalsmith.harness.tools import ToolContext, ToolRegistry
+from goalsmith.observability.usage import TokenUsage
 from tests.fixtures.fake_llm import FakeChatModel, text, tool_call
 
 WRITE = tool_call("write_file", {"path": "plan.md", "content": "v1"}, call_id="w1")
@@ -170,6 +171,9 @@ async def test_checkpoints_restore_budget_without_unsafe_type_warnings(
     assert "unregistered type" not in caplog.text
 
 
-def test_serializer_round_trips_budget_usage() -> None:
+def test_serializer_round_trips_budget_usage(caplog: pytest.LogCaptureFixture) -> None:
     serde = checkpoint_serializer()
-    assert serde.loads_typed(serde.dumps_typed(BudgetUsage(steps=3))) == BudgetUsage(steps=3)
+    usage = BudgetUsage(steps=3, tokens=TokenUsage(input_tokens=10, output_tokens=2, cost_usd=0.5))
+    with caplog.at_level(logging.WARNING):
+        assert serde.loads_typed(serde.dumps_typed(usage)) == usage
+    assert "unregistered type" not in caplog.text

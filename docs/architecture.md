@@ -67,4 +67,28 @@ START -> agent --(read-only tool calls)--> tools -> agent ... -> END
 - **Memory:** `memory/store.py` (LangGraph Store + pgvector). The tools live in `capabilities/tools/memory.py`.
 - **Wiring:** Postgres or in-memory fallback is chosen in `core/persistence.py`. See ADR 0006.
 
+## Tracing, prompts and evals (M5)
+
+```
+goalsmith run (CLI root span, session = run id)
+└─ agent.run / agent.resume        AgentLoop: outside the nodes, so nothing repeats on resume
+   ├─ model <name>                 ModelCallTracer (LangChain callback): messages, tokens, cost, prompt version
+   ├─ tool <name>                  ToolRegistry.execute: arguments, result, error level
+   └─ approval.requested/decided   events
+        │ OTLP/HTTP
+        ▼
+Langfuse (make obs-up) ── also any OTLP backend
+```
+
+- **Observability** lives in `observability/`:
+  - `spans.py`: OpenTelemetry helpers that set Langfuse attributes;
+  - `tracing.py`: setup, plus the model-call callback;
+  - `usage.py`: tokens and cost;
+  - `logs.py`: structlog lines carrying `run_id` and `trace_id`.
+- **Prompts:** `src/goalsmith/prompts/*.md`, versioned. The version and a hash of the text go on every span.
+- **Evals:**
+  - golden tasks in `evals/tasks/`, shared rubrics in `evals/rubrics/`;
+  - `evals/checks.py` runs the deterministic checks, `evals/judges.py` the LLM judge, and `evals/runner.py` runs them and writes the report;
+  - CI posts the smoke table on each PR. See ADR 0007.
+
 This document grows as milestones land. Decisions are recorded in [adr/](adr/).

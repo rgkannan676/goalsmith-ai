@@ -76,14 +76,30 @@ Each milestone is one branch (`feat/mNN-<name>`). It ends with green tests, an u
 
 **Notes:** `goalsmith resume <run_id>` continues a paused run. `remember` needs approval (see ADR 0006). Integration tests use their own database, `goalsmith_test`.
 
-## M5: Tracing and eval v1 (next)
+## M5: Tracing and eval v1 ✅ (branch `feat/m05-tracing-evals`)
 
 **Goal:** every run can be diagnosed from its trace, and every PR shows eval scores.
 
 **Acceptance criteria**
-- [ ] Langfuse (self-hosted) in Docker Compose; OpenTelemetry traces for model calls, tool calls and approvals
-- [ ] Token and cost tracking per run; structlog logs carry the run and trace ids
-- [ ] Prompts move to versioned files in `prompts/`; the version is recorded on each trace
-- [ ] `evals/tasks/*.yaml`: 15 golden tasks with rubrics; LLM judge in `evals/judges.py`
-- [ ] `make eval-smoke` runs in CI and posts a results table as a PR comment
-- [ ] One bad run is diagnosed from its trace (documented with a screenshot)
+- [x] Langfuse (self-hosted) in Docker Compose (`make obs-up`); OpenTelemetry traces for model calls, tool calls and approvals
+- [x] Token and cost tracking per run; structlog logs carry the run and trace ids
+- [x] Prompts move to versioned files (`src/goalsmith/prompts/`); the version is recorded on each trace
+- [x] `evals/tasks/*.yaml`: 15 golden tasks with rubrics; LLM judge in `evals/judges.py`
+- [x] `make eval-smoke` runs in CI and posts a results table as a PR comment (needs the `ANTHROPIC_API_KEY` repo secret)
+- [x] One bad run is diagnosed from its trace ([docs/diagnosis/m5-unsupported-advice.md](diagnosis/m5-unsupported-advice.md))
+
+**Notes:**
+- The prompts live inside the package, not at the repo root, so they ship with it (ADR 0007).
+- The diagnosis led to `agent_system` v2.
+- Results on v2: smoke 6/6, full suite 13/15. The two failures were eval mistakes, and both tasks pass after the fixes.
+
+## M6: Planner and specialists (next)
+
+**Goal:** a planner breaks a goal into steps and specialist agents carry them out in parallel.
+
+**Acceptance criteria**
+- [ ] `PlanStep` model and a planner node (role `planner`) with structured output
+- [ ] Dispatcher with `Send` fan-out to researcher, analyst, coder and writer subgraphs in `agents/`
+- [ ] Agent specs in `agents/*.yaml` (prompt, tools, model role)
+- [ ] Demo 1 (cited research report) passes end to end
+- [ ] Routing accuracy is reported by the eval

@@ -1,0 +1,6 @@
+name: file_task
+description: Produces or transforms a file in the workspace.
+criteria:
+  - The requested file was written and contains what the goal asked for.
+  - The file's content is faithful to the inputs; it adds no facts that are not in them.
+  - The final answer tells the user what was written and where.

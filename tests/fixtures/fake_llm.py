@@ -20,6 +20,7 @@ class FakeChatModel(BaseChatModel):
     """Replays `responses` one per call and records what it was sent."""
 
     responses: list[AIMessage]
+    model_name: str = "fake-model"  # reported to callbacks, like a real model's name
     calls: list[list[BaseMessage]] = Field(default_factory=list)
     bound_tools: list[Any] = Field(default_factory=list)
     _index: int = PrivateAttr(default=0)
@@ -68,6 +69,28 @@ def tool_call(name: str, args: dict[str, Any], call_id: str | None = None) -> AI
         tool_calls=[
             {"name": name, "args": args, "id": call_id or f"call_{name}", "type": "tool_call"}
         ],
+    )
+
+
+def with_usage(
+    message: AIMessage,
+    input_tokens: int,
+    output_tokens: int,
+    *,
+    model: str = "fake-model",
+    cache_read: int = 0,
+) -> AIMessage:
+    """`message` with token counts and a model name, as a real provider reports them."""
+    return message.model_copy(
+        update={
+            "usage_metadata": {
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "total_tokens": input_tokens + output_tokens,
+                "input_token_details": {"cache_read": cache_read},
+            },
+            "response_metadata": {"model_name": model},
+        }
     )
 
 
