@@ -53,4 +53,18 @@ The code is in `capabilities/rag/`:
 
 The model-facing tool is `capabilities/tools/docs.py`. See ADR 0005.
 
+## Approvals, checkpoints and memory (M4)
+
+```
+START -> agent --(read-only tool calls)--> tools -> agent ... -> END
+               \--(write / external calls)--> approval --interrupt()--> [paused, saved in Postgres]
+                                                  ^                          |
+                                                  └── Command(resume=decisions) <- human: approve / edit / reject
+```
+
+- **Checkpointer:** `AsyncPostgresSaver` saves the state after every node, keyed by `thread_id` = run id.
+- **Approval logic:** pure functions in `harness/permissions.py`.
+- **Memory:** `memory/store.py` (LangGraph Store + pgvector). The tools live in `capabilities/tools/memory.py`.
+- **Wiring:** Postgres or in-memory fallback is chosen in `core/persistence.py`. See ADR 0006.
+
 This document grows as milestones land. Decisions are recorded in [adr/](adr/).

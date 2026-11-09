@@ -13,6 +13,8 @@ from typing import Literal, get_args
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from goalsmith.harness.tools import Risk
+
 Role = Literal["planner", "worker", "router", "judge"]
 """What a model is used for. Code asks for a role, never for a model name."""
 
@@ -88,6 +90,19 @@ class Settings(BaseSettings):
     judge: ModelSpec = ModelSpec(model="claude-opus-5-5")
 
     rag: RagSettings = RagSettings()
+
+    # Checkpoints and long-term memory (M4). Matches docker-compose.yml for local dev;
+    # set it to an empty string to keep everything in memory.
+    postgres_url: SecretStr | None = SecretStr(
+        "postgresql://goalsmith:goalsmith@localhost:5432/goalsmith"
+    )
+    user_id: str = "local"  # whose memories `remember` and `recall` use
+    # Tool risk levels that pause for a human. e.g. GOALSMITH_APPROVAL_RISKS='["external"]'
+    approval_risks: frozenset[Risk] = frozenset({"write", "external"})
+
+    def postgres_dsn(self) -> str | None:
+        value = self.postgres_url.get_secret_value() if self.postgres_url else ""
+        return value or None
 
     def model_for(self, role: Role) -> ModelSpec:
         specs: dict[Role, ModelSpec] = {

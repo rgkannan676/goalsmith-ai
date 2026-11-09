@@ -1,6 +1,7 @@
-"""Command line: `goalsmith run "<goal>"`, `goalsmith ingest <files>`, `goalsmith search "<q>"`."""
+"""Command line: `goalsmith run`, `resume`, `ingest` and `search`."""
 
 import asyncio
+import json
 from collections.abc import AsyncIterator, Coroutine
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -9,7 +10,9 @@ from typing import Annotated, Any
 from uuid import uuid4
 
 import typer
+from langchain_core.embeddings import Embeddings
 from langchain_core.language_models import BaseChatModel
+from langgraph.store.base import BaseStore
 from qdrant_client.http.exceptions import ApiException
 from rich.console import Console
 from rich.markdown import Markdown
@@ -24,18 +27,23 @@ from goalsmith.capabilities.rag.retrieve import HybridRetriever
 from goalsmith.capabilities.rag.store import DocStore, StoreError, open_client
 from goalsmith.capabilities.tools.docs import search_docs_tool
 from goalsmith.capabilities.tools.files import read_file_tool, write_file_tool
+from goalsmith.capabilities.tools.memory import recall_tool, remember_tool
 from goalsmith.capabilities.tools.web import tavily_client, web_search_tool
 from goalsmith.config import Settings, get_settings
+from goalsmith.core.persistence import PersistenceError, open_persistence
 from goalsmith.core.state import RunResult
 from goalsmith.harness.budget import Budget
-from goalsmith.harness.loop import AgentLoop
+from goalsmith.harness.loop import AgentLoop, RunStateError
+from goalsmith.harness.permissions import ApprovalRequest, Decision, Permissions
 from goalsmith.harness.tools import Tool, ToolContext, ToolRegistry
 from goalsmith.llm import LLMConfigError, get_chat_model, get_embeddings, get_reranker
+from goalsmith.memory.store import Memory, MemoryStoreError
 
 app = typer.Typer(help="Goalsmith: from goal to done.", no_args_is_help=True)
 console = Console()
 
 EXIT_BUDGET_EXCEEDED = 2
+EXIT_PAUSED = 3  # stopped at an approval prompt; continue with `goalsmith resume`
 
 CollectionOption = Annotated[
     str | None, typer.Option("--collection", "-c", help="Document collection (default: docs).")
@@ -58,65 +66,234 @@ def main(
     """Goalsmith: from goal to done."""
 
 
-# --- run -------------------------------------------------------------------------
+# --- run and resume --------------------------------------------------------------
+
+MaxStepsOption = Annotated[
+    int | None, typer.Option(min=1, help="Maximum model calls (default from settings).")
+]
+YesOption = Annotated[
+    bool, typer.Option("--yes", "-y", help="Approve every action without asking.")
+]
 
 
 @app.command()
 def run(
     goal: Annotated[str, typer.Argument(help="What you want done, in plain English.")],
-    max_steps: Annotated[
-        int | None, typer.Option(min=1, help="Maximum model calls (default from settings).")
-    ] = None,
+    max_steps: MaxStepsOption = None,
     run_id: Annotated[str | None, typer.Option(help="Name for this run's workspace.")] = None,
+    yes: YesOption = False,
 ) -> None:
-    """Run a single agent on GOAL and print the result."""
-    settings = get_settings()
-    try:
-        model = get_chat_model("worker", settings)
-    except LLMConfigError as exc:
-        console.print(f"[red]Configuration error:[/red] {escape(str(exc))}")
-        raise typer.Exit(1) from exc
+    """Run a single agent on GOAL and print the result.
 
-    run_id = run_id or _new_run_id()
-    workspace = settings.workspace_root / run_id
-    workspace.mkdir(parents=True, exist_ok=True)
-    context = ToolContext(run_id=run_id, workspace=workspace)
+    Before a tool that writes or acts on the outside world runs, you are asked to
+    approve, edit or reject it.
+    """
+    settings = get_settings()
+    model = _worker_model(settings)
+    context = _context(settings, run_id or _new_run_id())
     budget = Budget(max_steps=max_steps or settings.max_steps)
 
-    console.print(f"[bold]Run[/bold] {run_id}  ·  budget {budget.max_steps} steps")
-    result = asyncio.run(_run(goal, model, context, budget, settings))
+    console.print(f"[bold]Run[/bold] {context.run_id}  ·  budget {budget.max_steps} steps")
+    result = _run_session(
+        _start(goal, model, context, budget, settings, auto_approve=yes), settings
+    )
+    _finish(result, context)
 
+
+@app.command()
+def resume(
+    run_id: Annotated[str, typer.Argument(help="The run to continue.")],
+    max_steps: MaxStepsOption = None,
+    yes: YesOption = False,
+) -> None:
+    """Continue a run that is waiting for approval, even after a restart."""
+    settings = get_settings()
+    model = _worker_model(settings)
+    context = _context(settings, run_id)
+    budget = Budget(max_steps=max_steps or settings.max_steps)
+
+    console.print(f"[bold]Resume[/bold] {run_id}")
+    result = _run_session(_continue(model, context, budget, settings, auto_approve=yes), settings)
+    _finish(result, context)
+
+
+async def _start(
+    goal: str,
+    model: BaseChatModel,
+    context: ToolContext,
+    budget: Budget,
+    settings: Settings,
+    *,
+    auto_approve: bool,
+) -> RunResult:
+    # One event loop for the whole run: the Qdrant and Postgres clients must live on
+    # the same loop as the agent that uses them.
+    async with _open_session(settings, model, context, budget) as (loop, durable):
+        result = await loop.run(goal, on_update=_print_update)
+        return await _handle_approvals(loop, result, durable, auto_approve=auto_approve)
+
+
+async def _continue(
+    model: BaseChatModel,
+    context: ToolContext,
+    budget: Budget,
+    settings: Settings,
+    *,
+    auto_approve: bool,
+) -> RunResult:
+    async with _open_session(settings, model, context, budget, require_durable=True) as (
+        loop,
+        durable,
+    ):
+        pending = await loop.pending()
+        if not pending:
+            raise RunStateError(f"Run {context.run_id!r} is not waiting for approval.")
+        result = RunResult(
+            run_id=context.run_id, status="awaiting_approval", answer="", steps=0, pending=pending
+        )
+        return await _handle_approvals(loop, result, durable, auto_approve=auto_approve)
+
+
+@asynccontextmanager
+async def _open_session(
+    settings: Settings,
+    model: BaseChatModel,
+    context: ToolContext,
+    budget: Budget,
+    *,
+    require_durable: bool = False,
+) -> AsyncIterator[tuple[AgentLoop, bool]]:
+    """Open document search and persistence, build the tools and the agent loop."""
+    embeddings = get_embeddings(settings)
+    async with (
+        _open_store(settings) as docs,
+        open_persistence(
+            settings.postgres_dsn(), embeddings, require_durable=require_durable
+        ) as saved,
+    ):
+        if not saved.durable:
+            _warn("Postgres is off: approvals and memories last only for this run (`make up`).")
+        tools = await _build_tools(settings, docs, embeddings, saved.store)
+        loop = AgentLoop(
+            model,
+            ToolRegistry(tools),
+            context,
+            budget=budget,
+            permissions=Permissions(needs_approval=settings.approval_risks),
+            checkpointer=saved.checkpointer,
+        )
+        yield loop, saved.durable
+
+
+async def _handle_approvals(
+    loop: AgentLoop, result: RunResult, durable: bool, *, auto_approve: bool
+) -> RunResult:
+    """Ask the human about each paused tool call, resume, and repeat until done."""
+    while result.status == "awaiting_approval":
+        if auto_approve:
+            decisions = {r.call_id: Decision(action="approve") for r in result.pending}
+            console.print(f"  [dim]auto-approved {len(decisions)} action(s)[/dim]")
+        else:
+            try:
+                decisions = {r.call_id: _ask(r) for r in result.pending}
+            except typer.Abort:  # Ctrl+C or end of input at the prompt
+                console.print()
+                if durable:
+                    console.print(
+                        f"[yellow]Paused.[/yellow] Continue later with: "
+                        f"goalsmith resume {result.run_id}"
+                    )
+                else:
+                    _warn("Stopped. This run was not saved (Postgres is off), so it cannot resume.")
+                raise typer.Exit(EXIT_PAUSED) from None
+        result = await loop.resume(decisions, on_update=_print_update)
+    return result
+
+
+def _ask(request: ApprovalRequest) -> Decision:
+    body = "\n".join(
+        f"[bold]{escape(key)}[/bold]: {escape(_short(value, 300))}"
+        for key, value in request.args.items()
+    )
+    console.print(
+        Panel(body or "(no arguments)", title=f"Approve {request.tool}? (risk: {request.risk})")
+    )
+    choice = ""
+    while choice not in ("a", "e", "r"):
+        # Typer bundles its own click, so validate here instead of using click.Choice.
+        choice = typer.prompt("[a]pprove, [e]dit or [r]eject").strip().lower()[:1]
+    if choice == "a":
+        return Decision(action="approve")
+    if choice == "e":
+        return Decision(action="edit", args=_prompt_args(request.args))
+    reason = typer.prompt("Reason (optional)", default="", show_default=False)
+    return Decision(action="reject", reason=reason)
+
+
+def _prompt_args(current: dict[str, Any]) -> dict[str, Any]:
+    while True:
+        raw = typer.prompt("New arguments as JSON", default=json.dumps(current))
+        try:
+            value = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            console.print(f"[red]Not valid JSON:[/red] {escape(str(exc))}")
+            continue
+        if isinstance(value, dict):
+            return value
+        console.print('[red]Expected a JSON object, e.g. {"path": "notes.md"}[/red]')
+
+
+def _finish(result: RunResult, context: ToolContext) -> None:
     console.print(Panel(Markdown(result.answer), title=f"{result.status} · {result.steps} steps"))
-    console.print(f"Workspace: {workspace}")
+    console.print(f"Workspace: {context.workspace}")
     if result.status == "budget_exceeded":
         raise typer.Exit(EXIT_BUDGET_EXCEEDED)
 
 
-async def _run(
-    goal: str, model: BaseChatModel, context: ToolContext, budget: Budget, settings: Settings
-) -> RunResult:
-    # One event loop for the whole run: the Qdrant client must live on the same loop
-    # as the agent that calls search_docs.
-    async with _open_store(settings) as store:
-        tools = await _build_tools(settings, store)
-        loop = AgentLoop(model, ToolRegistry(tools), context, budget=budget)
-        return await loop.run(goal, on_update=_print_update)
+def _run_session(coro: Coroutine[Any, Any, RunResult], settings: Settings) -> RunResult:
+    try:
+        return asyncio.run(coro)
+    except (RunStateError, PersistenceError, MemoryStoreError, ValueError) as exc:
+        console.print(f"[red]Error:[/red] {escape(str(exc))}")
+        raise typer.Exit(1) from exc
 
 
-async def _build_tools(settings: Settings, store: DocStore) -> list[Tool]:
+def _worker_model(settings: Settings) -> BaseChatModel:
+    try:
+        return get_chat_model("worker", settings)
+    except LLMConfigError as exc:
+        console.print(f"[red]Configuration error:[/red] {escape(str(exc))}")
+        raise typer.Exit(1) from exc
+
+
+def _context(settings: Settings, run_id: str) -> ToolContext:
+    workspace = settings.workspace_root / run_id
+    workspace.mkdir(parents=True, exist_ok=True)
+    # Every risk level may run; write and external ones wait for approval first.
+    return ToolContext(
+        run_id=run_id, workspace=workspace, allowed_risks=frozenset({"read", "write", "external"})
+    )
+
+
+async def _build_tools(
+    settings: Settings, docs: DocStore, embeddings: Embeddings, memory_store: BaseStore
+) -> list[Tool]:
     tools = [read_file_tool(), write_file_tool()]
     if settings.tavily_api_key is None:
         _warn("web_search is off: TAVILY_API_KEY is not set.")
     else:
         tools.append(web_search_tool(tavily_client(settings.tavily_api_key.get_secret_value())))
 
-    docs_tool = await _docs_tool(settings, store)
+    docs_tool = await _docs_tool(settings, docs, embeddings)
     if docs_tool is not None:
         tools.append(docs_tool)
+
+    memory = Memory(memory_store, settings.user_id)
+    tools += [recall_tool(memory), remember_tool(memory)]
     return tools
 
 
-async def _docs_tool(settings: Settings, store: DocStore) -> Tool | None:
+async def _docs_tool(settings: Settings, store: DocStore, embeddings: Embeddings) -> Tool | None:
     try:
         collections = await store.collections()
     except ApiException:
@@ -126,7 +303,7 @@ async def _docs_tool(settings: Settings, store: DocStore) -> Tool | None:
         _warn("search_docs is off: no documents yet. Add some with `goalsmith ingest <files>`.")
         return None
     return search_docs_tool(
-        _retriever(settings, store),
+        _retriever(settings, store, embeddings),
         default_collection=settings.rag.default_collection,
         collections=collections,
     )
@@ -215,10 +392,12 @@ async def _open_store(settings: Settings) -> AsyncIterator[DocStore]:
         await client.close()
 
 
-def _retriever(settings: Settings, store: DocStore) -> HybridRetriever:
+def _retriever(
+    settings: Settings, store: DocStore, embeddings: Embeddings | None = None
+) -> HybridRetriever:
     return HybridRetriever(
         store,
-        get_embeddings(settings),
+        embeddings or get_embeddings(settings),
         reranker=get_reranker(settings),
         candidates=settings.rag.candidates,
     )
@@ -235,6 +414,8 @@ def _print_update(node: str, update: dict[str, Any]) -> None:
             for call in getattr(message, "tool_calls", []):
                 args = ", ".join(f"{k}={_short(v)}" for k, v in call["args"].items())
                 console.print(f"  [cyan]→ {call['name']}[/cyan]({escape(args)})")
+        elif node == "approval" and getattr(message, "status", None) == "error":
+            console.print(f"  [red]✗ {message.name}: rejected[/red]")
         elif node == "tools":
             ok = getattr(message, "status", "success") == "success"
             mark = "[green]✓[/green]" if ok else "[red]✗[/red]"

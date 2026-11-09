@@ -8,11 +8,12 @@ from typing import Annotated, Literal, TypedDict
 
 from langchain_core.messages import AnyMessage
 from langgraph.graph.message import add_messages
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from goalsmith.harness.budget import BudgetUsage
+from goalsmith.harness.permissions import ApprovalRequest
 
-RunStatus = Literal["running", "completed", "budget_exceeded"]
+RunStatus = Literal["running", "awaiting_approval", "completed", "budget_exceeded"]
 
 
 class RunState(TypedDict):
@@ -31,3 +32,5 @@ class RunResult(BaseModel):
     status: RunStatus
     answer: str
     steps: int
+    # Filled when status is "awaiting_approval": the tool calls waiting for a human.
+    pending: list[ApprovalRequest] = Field(default_factory=list)
