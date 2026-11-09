@@ -19,6 +19,20 @@ make setup                # install deps + pre-commit hooks
 make lint test            # ruff, mypy --strict, unit tests
 ```
 
+## Run a goal
+
+```bash
+uv run goalsmith run "Find three recent articles on agent harnesses and save a summary to notes.md"
+```
+
+The agent works in a loop: Claude decides which tool to call, the **harness** validates and runs it, and the result goes back to Claude, until it gives a final answer or hits the step budget (`--max-steps`, default 15). Files go to `workspaces/<run_id>/`.
+
+| Tool | Risk | What it does |
+|---|---|---|
+| `web_search` | read | Tavily web search (needs `TAVILY_API_KEY`) |
+| `read_file` | read | Read a file from the run workspace |
+| `write_file` | write | Write a file in the run workspace |
+
 ## Models
 
 Code never names a model. It asks for a **role**, and configuration picks the model:
@@ -53,7 +67,7 @@ Override any of them in `.env`, e.g. `GOALSMITH_WORKER__MODEL=claude-haiku-5-5`.
 |---|---|---|
 | M0 | Skeleton: tooling, CI, docs | ✅ |
 | M1 | Model layer | ✅ |
-| M2 | Single agent and harness v1 | ⏳ |
+| M2 | Single agent and harness v1 | ✅ |
 | M3 | RAG | ⏳ |
 | M4 | Checkpoints, human approval, memory | ⏳ |
 | M5 | Tracing and eval v1 | ⏳ |

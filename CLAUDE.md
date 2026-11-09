@@ -11,6 +11,7 @@ The current milestone and its acceptance criteria are in docs/milestones.md.
 - Unit tests: `uv run pytest -m "not integration"` (or `make test`)
 - Integration: `make up` then `uv run pytest -m integration`
 - Evals: `make eval-smoke`
+- Run an agent: `uv run goalsmith run "<goal>" [--max-steps N] [--run-id NAME]`
 - Add a dependency: `uv add <pkg>` (never pip install)
 
 ## Architecture rules
@@ -19,6 +20,8 @@ The current milestone and its acceptance criteria are in docs/milestones.md.
 - Models come only from llm.get_chat_model(role). Never hard-code a provider or model name elsewhere.
 - Every shared state field that parallel nodes write must have a reducer.
 - New tools need: Pydantic args schema, risk level (read/write/external), unit test.
+  Build them as `Tool(...)` factories (see capabilities/tools/files.py) and register them in a ToolRegistry.
+- Tools raise ToolError for expected failures; the registry turns every error into a ToolMessage.
 - New skills live in skills/<name>/SKILL.md with name + description front matter.
 
 ## Code style

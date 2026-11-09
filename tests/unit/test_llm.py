@@ -4,10 +4,10 @@ import pytest
 from langchain_anthropic import ChatAnthropic
 from langchain_core.language_models import BaseChatModel
 from pydantic import BaseModel
-from tests.fixtures.fake_llm import FakeChatModel, structured, text, tool_call
 
 from goalsmith import llm
 from goalsmith.config import ModelSpec, Settings
+from tests.fixtures.fake_llm import FakeChatModel, structured, text, tool_call
 
 
 def make_settings(monkeypatch: pytest.MonkeyPatch, **env: str) -> Settings:
