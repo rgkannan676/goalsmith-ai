@@ -26,3 +26,7 @@ evals/reports/*.tmp
 .DS_Store
 .idea/
 .vscode/
+
+# Local model downloads and in-process Qdrant data
+.cache/
+.qdrant/

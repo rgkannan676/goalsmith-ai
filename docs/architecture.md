@@ -32,4 +32,25 @@ Across every layer: guardrails, OpenTelemetry traces to Langfuse, eval suite gat
 | MCP server | Abilities | Add an entry to `mcp_servers.yaml` |
 | Agent | A specialist | Add a spec to `agents/<name>.yaml` |
 
+## RAG (M3)
+
+```
+ingest:  file -> parse (md / html / pdf) -> sections by heading or page -> chunks (source id, heading path)
+         chunk -> bge-small embedding + BM25 sparse vector -> Qdrant point (payload = chunk)
+search:  query -> dense top 20  ┐
+         query -> BM25 top 20   ┴> RRF fusion -> cross-encoder rerank -> top k -> search_docs output
+```
+
+The code is in `capabilities/rag/`:
+
+| File | Job |
+|---|---|
+| `ingest.py` | Parsers, chunker, ingest pipeline |
+| `sparse.py` | BM25 encoder |
+| `store.py` | The only code that talks to Qdrant |
+| `retrieve.py` | RRF fusion and `HybridRetriever` |
+| `rerank.py` | Reranking step |
+
+The model-facing tool is `capabilities/tools/docs.py`. See ADR 0005.
+
 This document grows as milestones land. Decisions are recorded in [adr/](adr/).

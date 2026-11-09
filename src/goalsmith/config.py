@@ -30,6 +30,26 @@ class ModelSpec(BaseModel):
     max_tokens: int = 4096
 
 
+class RagSettings(BaseModel):
+    """Document search (M3). Env vars look like `GOALSMITH_RAG__QDRANT_URL`."""
+
+    model_config = ConfigDict(frozen=True)
+
+    qdrant_url: str = "http://localhost:6333"
+    # Set a folder to run Qdrant inside this process instead of in Docker.
+    qdrant_path: Path | None = None
+    default_collection: str = "docs"
+
+    # Local models run by fastembed. Downloaded once into model_cache_dir.
+    embedding_model: str = "BAAI/bge-small-en-v1.5"
+    rerank_model: str | None = "Xenova/ms-marco-MiniLM-L-6-v2"  # None turns reranking off
+    model_cache_dir: Path = Path(".cache/fastembed")
+
+    chunk_chars: int = Field(default=1200, ge=200)
+    chunk_overlap: int = Field(default=150, ge=0)
+    candidates: int = Field(default=20, ge=1)  # per retriever, before fusion and reranking
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="GOALSMITH_",
@@ -66,6 +86,8 @@ class Settings(BaseSettings):
     worker: ModelSpec = ModelSpec(model="claude-sonnet-5-5")
     router: ModelSpec = ModelSpec(model="claude-haiku-5-5", max_tokens=1024)
     judge: ModelSpec = ModelSpec(model="claude-opus-5-5")
+
+    rag: RagSettings = RagSettings()
 
     def model_for(self, role: Role) -> ModelSpec:
         specs: dict[Role, ModelSpec] = {

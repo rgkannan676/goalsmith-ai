@@ -1,4 +1,4 @@
-.PHONY: setup lint format test test-integration eval-smoke eval-full up down
+.PHONY: setup lint format test test-integration eval-smoke eval-full eval-retrieval up down
 
 setup: ## Install deps and git hooks
 	uv sync
@@ -25,8 +25,11 @@ eval-smoke: ## Quick eval suite (added in M5)
 eval-full: ## Full nightly eval suite (added in M5)
 	@echo "eval-full: not implemented yet (M5)"
 
-up: ## Start Docker Compose services (added in M3)
-	@if [ -f docker-compose.yml ]; then docker compose up -d; else echo "no docker-compose.yml yet (M3)"; fi
+eval-retrieval: ## Retrieval metrics (hit@5, MRR, nDCG) on the labelled queries
+	uv run python -m goalsmith.evals.retrieval
 
-down: ## Stop Docker Compose services
-	@if [ -f docker-compose.yml ]; then docker compose down; else echo "no docker-compose.yml yet (M3)"; fi
+up: ## Start Docker Compose services and wait until they are healthy
+	docker compose up -d --wait
+
+down: ## Stop Docker Compose services (data volumes are kept)
+	docker compose down

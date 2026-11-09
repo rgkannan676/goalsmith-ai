@@ -32,6 +32,36 @@ The agent works in a loop: Claude decides which tool to call, the **harness** va
 | `web_search` | read | Tavily web search (needs `TAVILY_API_KEY`) |
 | `read_file` | read | Read a file from the run workspace |
 | `write_file` | write | Write a file in the run workspace |
+| `search_docs` | read | Hybrid search over your ingested documents, with citable source ids |
+
+## Search your documents (RAG)
+
+```bash
+make up                                   # Qdrant in Docker
+uv run goalsmith ingest path/to/docs      # .md .html .pdf .txt, files or folders
+uv run goalsmith search "parental leave"  # check retrieval without the agent
+uv run goalsmith run "How much parental leave do I get?"
+```
+
+Answers cite the passages they use, e.g. `18 weeks of paid leave [handbook.md#4]`.
+
+How search works:
+1. **Ingest:** files are split along their headings (or PDF pages) into chunks. Each chunk keeps its heading path and a source id.
+2. **Index:** every chunk gets a dense embedding (local `bge-small`) and a BM25 sparse vector. Both are stored in Qdrant.
+3. **Search:** dense and BM25 results are merged with reciprocal rank fusion, then a cross-encoder reranks the top 20.
+
+No Docker? Set `GOALSMITH_RAG__QDRANT_PATH=.qdrant` to run Qdrant inside the process. The local models (about 150 MB) download on first use.
+
+`make eval-retrieval` measures search quality on 40 labelled queries:
+
+| Setup | hit@5 | MRR | nDCG@5 |
+|---|---|---|---|
+| dense | 0.975 | 0.963 | 0.966 |
+| bm25 | 1.000 | 0.946 | 0.960 |
+| hybrid (RRF) | 1.000 | 0.971 | 0.978 |
+| hybrid + rerank | 1.000 | 1.000 | 1.000 |
+
+See [ADR 0005](docs/adr/0005-hybrid-retrieval.md) for the design and [evals/retrieval/report.md](evals/retrieval/report.md) for the full report.
 
 ## Models
 
@@ -58,6 +88,7 @@ Override any of them in `.env`, e.g. `GOALSMITH_WORKER__MODEL=claude-haiku-5-5`.
 |---|---|
 | `src/goalsmith/` | The Python package |
 | `tests/` | Unit tests (no network) and integration tests |
+| `evals/` | Eval datasets, e.g. the retrieval corpus and labelled queries |
 | `docs/` | Architecture, ADRs, milestone log, AI review log |
 | `CLAUDE.md` | Rules for working on this repo with Claude Code |
 
@@ -68,7 +99,7 @@ Override any of them in `.env`, e.g. `GOALSMITH_WORKER__MODEL=claude-haiku-5-5`.
 | M0 | Skeleton: tooling, CI, docs | ✅ |
 | M1 | Model layer | ✅ |
 | M2 | Single agent and harness v1 | ✅ |
-| M3 | RAG | ⏳ |
+| M3 | RAG | ✅ |
 | M4 | Checkpoints, human approval, memory | ⏳ |
 | M5 | Tracing and eval v1 | ⏳ |
 | M6–M16 | Multi-agent, MCP, skills, guardrails, API, deploy, showcase | ⏳ |
