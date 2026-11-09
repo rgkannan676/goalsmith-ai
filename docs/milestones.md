@@ -62,14 +62,28 @@ Each milestone is one branch (`feat/mNN-<name>`). It ends with green tests, an u
 
 **Notes:** the eval code lives in `src/goalsmith/evals/` (type-checked), and the datasets live in `evals/`. M5 follows the same split. Design and results are in ADR 0005.
 
-## M4: Checkpoints, human approval and memory (next)
+## M4: Checkpoints, human approval and memory ✅ (branch `feat/m04-approval-memory`)
 
 **Goal:** runs survive restarts, risky tools wait for a human, and agents remember across runs.
 
 **Acceptance criteria**
-- [ ] Postgres + pgvector in Docker Compose
-- [ ] `langgraph-checkpoint-postgres`: runs are resumable by `thread_id`
-- [ ] `harness/permissions.py`: `interrupt()` before `write` and `external` tools; resume with approve, edit or reject
-- [ ] `memory/store.py`: `remember` and `recall` on the LangGraph Store
-- [ ] An approval survives a process restart (integration test)
-- [ ] A rejected action never runs (integration test)
+- [x] Postgres + pgvector in Docker Compose
+- [x] `langgraph-checkpoint-postgres`: runs are resumable by `thread_id`
+- [x] `harness/permissions.py`: `interrupt()` before `write` and `external` tools; resume with approve, edit or reject
+- [x] `memory/store.py`: `remember` and `recall` on the LangGraph Store
+- [x] An approval survives a process restart (`test_approval_survives_a_process_restart`, a real child process)
+- [x] A rejected action never runs (`test_a_rejected_action_never_runs`)
+
+**Notes:** `goalsmith resume <run_id>` continues a paused run. `remember` needs approval (see ADR 0006). Integration tests use their own database, `goalsmith_test`.
+
+## M5: Tracing and eval v1 (next)
+
+**Goal:** every run can be diagnosed from its trace, and every PR shows eval scores.
+
+**Acceptance criteria**
+- [ ] Langfuse (self-hosted) in Docker Compose; OpenTelemetry traces for model calls, tool calls and approvals
+- [ ] Token and cost tracking per run; structlog logs carry the run and trace ids
+- [ ] Prompts move to versioned files in `prompts/`; the version is recorded on each trace
+- [ ] `evals/tasks/*.yaml`: 15 golden tasks with rubrics; LLM judge in `evals/judges.py`
+- [ ] `make eval-smoke` runs in CI and posts a results table as a PR comment
+- [ ] One bad run is diagnosed from its trace (documented with a screenshot)

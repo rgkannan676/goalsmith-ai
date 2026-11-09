@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from goalsmith.capabilities.tools.files import read_file_tool, write_file_tool
 from goalsmith.harness.budget import Budget
 from goalsmith.harness.loop import AgentLoop
+from goalsmith.harness.permissions import AUTO_APPROVE
 from goalsmith.harness.tools import Tool, ToolContext, ToolRegistry
 from tests.fixtures.fake_llm import FakeChatModel, text, tool_call
 
@@ -28,7 +29,9 @@ async def test_goal_completes_after_tool_use(registry: ToolRegistry, ctx: ToolCo
             text("Done. The report is in report.md."),
         ]
     )
-    result = await AgentLoop(model, registry, ctx).run("Write a short report")
+    result = await AgentLoop(model, registry, ctx, permissions=AUTO_APPROVE).run(
+        "Write a short report"
+    )
 
     assert result.status == "completed"
     assert result.answer == "Done. The report is in report.md."
@@ -81,7 +84,7 @@ async def test_parallel_tool_calls_in_one_turn(registry: ToolRegistry, ctx: Tool
         ],
     )
     model = FakeChatModel(responses=[both, text("Both written.")])
-    result = await AgentLoop(model, registry, ctx).run("Write two files")
+    result = await AgentLoop(model, registry, ctx, permissions=AUTO_APPROVE).run("Write two files")
 
     assert result.status == "completed"
     assert (ctx.workspace / "a.md").read_text() == "A"
@@ -123,7 +126,8 @@ async def test_tool_risk_policy_applies_inside_loop(tmp_path: Path) -> None:
     )
     ctx = ToolContext(run_id="r1", workspace=tmp_path)  # default policy: read + write only
     model = FakeChatModel(responses=[tool_call("send_email", {}), text("blocked")])
-    await AgentLoop(model, registry, ctx).run("Email someone")
+    # No approval step here, so the registry's own risk gate is what blocks the call.
+    await AgentLoop(model, registry, ctx, permissions=AUTO_APPROVE).run("Email someone")
     tool_msg = model.calls[1][-1]
     assert isinstance(tool_msg, ToolMessage)
     assert tool_msg.status == "error"

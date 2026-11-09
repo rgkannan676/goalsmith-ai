@@ -1,12 +1,17 @@
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import pytest
+from langgraph.checkpoint.memory import InMemorySaver
 from qdrant_client.http.exceptions import ResponseHandlingException
 from typer.testing import CliRunner
 
 from goalsmith import cli
 from goalsmith.capabilities.rag.store import DocStore
 from goalsmith.config import RagSettings, Settings
+from goalsmith.core.persistence import Persistence
+from goalsmith.memory.store import in_memory_store
 from tests.fixtures.fake_llm import FakeChatModel, text, tool_call
 from tests.fixtures.fake_rag import HashEmbeddings
 
@@ -19,6 +24,7 @@ def settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Settings:
         _env_file=None,
         workspace_root=tmp_path / "workspaces",
         rag=RagSettings(qdrant_path=tmp_path / "qdrant"),  # in-process Qdrant, no Docker
+        postgres_url=None,  # in-memory checkpoints and memory, no Docker
     )
     monkeypatch.setattr(cli, "get_settings", lambda: s)
     monkeypatch.setattr(cli, "get_embeddings", lambda settings=None: HashEmbeddings())
@@ -47,9 +53,10 @@ def test_run_prints_answer_and_workspace(
     )
     use_model(monkeypatch, model)
 
-    result = runner.invoke(cli.app, ["run", "Write hello", "--run-id", "t1"])
+    result = runner.invoke(cli.app, ["run", "Write hello", "--run-id", "t1"], input="a\n")
 
     assert result.exit_code == 0, result.output
+    assert "Approve write_file?" in result.output
     assert "All done." in result.output
     assert "write_file" in result.output  # live progress shows tool calls
     assert "completed" in result.output
@@ -154,3 +161,97 @@ def test_run_without_qdrant_still_works(
     result = runner.invoke(cli.app, ["run", "Hi", "--run-id", "t7"])
     assert result.exit_code == 0
     assert "Qdrant is not reachable" in result.output
+
+
+# --- approvals and resume ------------------------------------------------------------
+
+WRITE_PLAN = tool_call("write_file", {"path": "plan.md", "content": "v1"}, call_id="w1")
+
+
+@pytest.fixture
+def durable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stand-in for Postgres: one saver and store shared by every CLI call in the test,
+    so a run paused by one `goalsmith` call can be resumed by the next."""
+    saver = InMemorySaver()
+    store = in_memory_store(HashEmbeddings(), 64)
+
+    @asynccontextmanager
+    async def fake(*args: object, **kwargs: object) -> AsyncIterator[Persistence]:
+        yield Persistence(checkpointer=saver, store=store, durable=True)
+
+    monkeypatch.setattr(cli, "open_persistence", fake)
+
+
+def test_reject_at_the_prompt(settings: Settings, monkeypatch: pytest.MonkeyPatch) -> None:
+    use_model(monkeypatch, FakeChatModel(responses=[WRITE_PLAN, text("Not written.")]))
+    result = runner.invoke(cli.app, ["run", "Plan", "--run-id", "t8"], input="r\nwrong file\n")
+    assert result.exit_code == 0, result.output
+    assert "write_file: rejected" in result.output
+    assert not (settings.workspace_root / "t8" / "plan.md").exists()
+
+
+def test_edit_at_the_prompt(settings: Settings, monkeypatch: pytest.MonkeyPatch) -> None:
+    use_model(monkeypatch, FakeChatModel(responses=[WRITE_PLAN, text("ok")]))
+    edited = '{"path": "plan.md", "content": "edited"}'
+    result = runner.invoke(
+        cli.app, ["run", "Plan", "--run-id", "t9"], input=f"e\nnot json\n{edited}\n"
+    )
+    assert result.exit_code == 0, result.output
+    assert "Not valid JSON" in result.output  # asked again after bad input
+    assert (settings.workspace_root / "t9" / "plan.md").read_text() == "edited"
+
+
+def test_yes_flag_skips_prompts(settings: Settings, monkeypatch: pytest.MonkeyPatch) -> None:
+    use_model(monkeypatch, FakeChatModel(responses=[WRITE_PLAN, text("ok")]))
+    result = runner.invoke(cli.app, ["run", "Plan", "--run-id", "t10", "--yes"])
+    assert result.exit_code == 0, result.output
+    assert "Approve write_file?" not in result.output
+    assert (settings.workspace_root / "t10" / "plan.md").exists()
+
+
+def test_pause_then_resume_in_a_later_command(
+    settings: Settings, durable: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    use_model(monkeypatch, FakeChatModel(responses=[WRITE_PLAN]))
+    paused = runner.invoke(cli.app, ["run", "Plan", "--run-id", "t11"], input="")  # EOF
+    assert paused.exit_code == cli.EXIT_PAUSED, paused.output
+    assert "goalsmith resume t11" in paused.output
+    assert not (settings.workspace_root / "t11" / "plan.md").exists()
+
+    use_model(monkeypatch, FakeChatModel(responses=[text("Plan saved.")]))
+    resumed = runner.invoke(cli.app, ["resume", "t11"], input="a\n")
+    assert resumed.exit_code == 0, resumed.output
+    assert "Plan saved." in resumed.output
+    assert (settings.workspace_root / "t11" / "plan.md").read_text() == "v1"
+
+
+def test_pause_without_postgres_cannot_resume(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    use_model(monkeypatch, FakeChatModel(responses=[WRITE_PLAN]))
+    paused = runner.invoke(cli.app, ["run", "Plan", "--run-id", "t12"], input="")
+    assert paused.exit_code == cli.EXIT_PAUSED
+    assert "cannot resume" in paused.output
+
+    resumed = runner.invoke(cli.app, ["resume", "t12"])
+    assert resumed.exit_code == 1
+    assert "Postgres is not reachable" in resumed.output
+
+
+def test_resume_a_run_that_is_not_paused(
+    settings: Settings, durable: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    use_model(monkeypatch, FakeChatModel(responses=[]))
+    result = runner.invoke(cli.app, ["resume", "never-started"])
+    assert result.exit_code == 1
+    assert "not waiting for approval" in result.output
+
+
+def test_run_id_cannot_be_reused(
+    settings: Settings, durable: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    use_model(monkeypatch, FakeChatModel(responses=[text("one"), text("two")]))
+    assert runner.invoke(cli.app, ["run", "Hi", "--run-id", "t13"]).exit_code == 0
+    again = runner.invoke(cli.app, ["run", "Hi", "--run-id", "t13"])
+    assert again.exit_code == 1
+    assert "already exists" in again.output

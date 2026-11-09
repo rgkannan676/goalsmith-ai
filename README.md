@@ -33,11 +33,41 @@ The agent works in a loop: Claude decides which tool to call, the **harness** va
 | `read_file` | read | Read a file from the run workspace |
 | `write_file` | write | Write a file in the run workspace |
 | `search_docs` | read | Hybrid search over your ingested documents, with citable source ids |
+| `recall` | read | Search memories saved in earlier runs |
+| `remember` | write | Save a lasting fact or preference about you |
+
+## Approvals, pause and resume
+
+Tools that change something (`write` and `external` risk) **wait for your approval** before they run:
+
+```
+╭──────── Approve write_file? (risk: write) ────────╮
+│ path: tip.md                                      │
+│ content: Tip: spell it "colour" (with a "u")…     │
+╰───────────────────────────────────────────────────╯
+[a]pprove, [e]dit or [r]eject:
+```
+
+- **Approve** runs the call as the model asked.
+- **Edit** runs it with the arguments you type (as JSON).
+- **Reject** never runs it, and the model is told why.
+
+Every step of a run is saved in Postgres (`make up`). If you quit at the prompt, the run pauses, and you can pick it up later, even after a restart:
+
+```bash
+uv run goalsmith resume <run_id>
+```
+
+`--yes` approves everything without asking. `GOALSMITH_APPROVAL_RISKS='["external"]'` asks only for outside-world actions.
+
+## Memory
+
+`remember` and `recall` give the agent memory across runs. Memories are stored in Postgres (pgvector) and searched by meaning, so "how do I spell colour?" finds "Prefers British English spelling". Saving a memory needs your approval, because it affects every later run.
 
 ## Search your documents (RAG)
 
 ```bash
-make up                                   # Qdrant in Docker
+make up                                   # Qdrant and Postgres in Docker
 uv run goalsmith ingest path/to/docs      # .md .html .pdf .txt, files or folders
 uv run goalsmith search "parental leave"  # check retrieval without the agent
 uv run goalsmith run "How much parental leave do I get?"
@@ -100,7 +130,7 @@ Override any of them in `.env`, e.g. `GOALSMITH_WORKER__MODEL=claude-haiku-5-5`.
 | M1 | Model layer | ✅ |
 | M2 | Single agent and harness v1 | ✅ |
 | M3 | RAG | ✅ |
-| M4 | Checkpoints, human approval, memory | ⏳ |
+| M4 | Checkpoints, human approval, memory | ✅ |
 | M5 | Tracing and eval v1 | ⏳ |
 | M6–M16 | Multi-agent, MCP, skills, guardrails, API, deploy, showcase | ⏳ |
 
