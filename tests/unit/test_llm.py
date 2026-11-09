@@ -6,7 +6,8 @@ from langchain_core.language_models import BaseChatModel
 from pydantic import BaseModel
 
 from goalsmith import llm
-from goalsmith.config import ModelSpec, Settings
+from goalsmith.config import ModelSpec, RagSettings, Settings
+from goalsmith.llm import FastEmbedEmbeddings, FastEmbedReranker, get_embeddings, get_reranker
 from tests.fixtures.fake_llm import FakeChatModel, structured, text, tool_call
 
 
@@ -121,3 +122,22 @@ def test_fake_model_fails_loudly_when_script_runs_out() -> None:
 def test_unit_tests_cannot_reach_the_network() -> None:
     with pytest.raises(RuntimeError, match="Network access"):
         socket.create_connection(("example.com", 443))
+
+
+def test_embeddings_and_reranker_come_from_settings() -> None:
+    settings = Settings(
+        _env_file=None,
+        rag=RagSettings(embedding_model="BAAI/bge-base-en-v1.5", rerank_model="some/reranker"),
+    )
+    embeddings = get_embeddings(settings)
+    assert isinstance(embeddings, FastEmbedEmbeddings)
+    assert embeddings.model_name == "BAAI/bge-base-en-v1.5"  # built lazily: nothing downloaded
+
+    reranker = get_reranker(settings)
+    assert isinstance(reranker, FastEmbedReranker)
+    assert reranker.model_name == "some/reranker"
+
+
+def test_reranker_can_be_turned_off() -> None:
+    settings = Settings(_env_file=None, rag=RagSettings(rerank_model=None))
+    assert get_reranker(settings) is None

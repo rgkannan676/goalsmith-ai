@@ -6,11 +6,16 @@ readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12"
 dependencies = [
+    "beautifulsoup4>=4.15.0",
+    "fastembed>=0.9.1",
     "langchain-anthropic>=1.7.10",
     "langchain-core>=1.7.6",
     "langgraph>=1.2.20",
     "pydantic>=2.14.3",
     "pydantic-settings>=2.16.2",
+    "pypdf>=7.0.0",
+    "pyyaml>=6.0.3",
+    "qdrant-client>=1.20.0",
     "rich>=15.0.0",
     "tavily-python>=0.8.5",
     "typer>=0.28.0",
@@ -30,6 +35,7 @@ dev = [
     "pytest>=9.2.0",
     "pytest-asyncio>=1.4.1.post1",
     "ruff>=0.17.4",
+    "types-pyyaml>=6.0.12.20261103",
 ]
 
 [tool.ruff]

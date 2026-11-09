@@ -1,0 +1,204 @@
+# Labelled queries for the retrieval eval (`make eval-retrieval`).
+# A retrieved chunk is relevant if it comes from `source` and its heading path
+# contains `section` (or, for PDFs, it is on `page`).
+
+- id: q01
+  query: How many weeks of paid leave do new parents get?
+  relevant:
+    - source: handbook.md
+      section: Parental leave
+- id: q02
+  query: Can I carry unused vacation days over into next year?
+  relevant:
+    - source: handbook.md
+      section: Annual leave
+- id: q03
+  query: "When do I need a doctor's note for being ill?"
+  relevant:
+    - source: handbook.md
+      section: Sick leave
+- id: q04
+  query: How many days per week am I allowed to work from home?
+  relevant:
+    - source: handbook.md
+      section: Remote work
+- id: q05
+  query: What is form EX-12 used for?
+  relevant:
+    - source: handbook.md
+      section: Expenses
+- id: q06
+  query: Is there money to buy a chair for my home office?
+  relevant:
+    - source: handbook.md
+      section: Equipment
+- id: q07
+  query: How much can I spend on courses and conferences each year?
+  relevant:
+    - source: handbook.md
+      section: Learning budget
+- id: q08
+  query: What are the core collaboration hours?
+  relevant:
+    - source: handbook.md
+      section: Core hours
+- id: q09
+  query: What should I do if my laptop gets stolen?
+  relevant:
+    - source: security-policy.md
+      section: Lost or stolen devices
+- id: q10
+  query: What is the minimum password length?
+  relevant:
+    - source: security-policy.md
+      section: Accounts and passwords
+- id: q11
+  query: Where are we allowed to store credit card numbers?
+  relevant:
+    - source: security-policy.md
+      section: Data classification
+- id: q12
+  query: How often are production access rights reviewed?
+  relevant:
+    - source: security-policy.md
+      section: Access reviews
+- id: q13
+  query: I got a suspicious phishing email. What now?
+  relevant:
+    - source: security-policy.md
+      section: Reporting a security incident
+- id: q14
+  query: Can I install a browser extension?
+  relevant:
+    - source: security-policy.md
+      section: Software installation
+- id: q15
+  query: Who do I reach on extension 4400?
+  relevant:
+    - source: security-policy.md
+      section: Lost or stolen devices
+- id: q16
+  query: Can I fly business class on a seven hour flight?
+  relevant:
+    - source: travel-policy.html
+      section: Flights
+- id: q17
+  query: What is the maximum hotel price per night in London?
+  relevant:
+    - source: travel-policy.html
+      section: Hotels
+- id: q18
+  query: How much is the daily food allowance on business trips?
+  relevant:
+    - source: travel-policy.html
+      section: Per diem and meals
+- id: q19
+  query: Can I take a taxi from the airport late at night?
+  relevant:
+    - source: travel-policy.html
+      section: Ground transport
+- id: q20
+  query: What do I need to check before a trip to the United States?
+  relevant:
+    - source: travel-policy.html
+      section: International travel
+- id: q21
+  query: Is alcohol reimbursed when travelling?
+  relevant:
+    - source: travel-policy.html
+      section: Per diem and meals
+- id: q22
+  query: How long is the probation period?
+  relevant:
+    - source: onboarding.html
+      section: Probation period
+- id: q23
+  query: Who can new joiners ask informal questions?
+  relevant:
+    - source: onboarding.html
+      section: Buddy programme
+- id: q24
+  query: When will my laptop arrive before I start?
+  relevant:
+    - source: onboarding.html
+      section: Before your first day
+- id: q25
+  query: What happens on my first day?
+  relevant:
+    - source: onboarding.html
+      section: Your first week
+- id: q26
+  query: By when must I finish the code of conduct course?
+  relevant:
+    - source: onboarding.html
+      section: Mandatory training
+- id: q27
+  query: What does error E-1042 mean?
+  relevant:
+    - source: beacon-faq.md
+      section: E-1042
+- id: q28
+  query: My sensor will not connect to my 5 GHz wifi
+  relevant:
+    - source: beacon-faq.md
+      section: E-1042
+- id: q29
+  query: How do I recalibrate the CO2 reading?
+  relevant:
+    - source: beacon-faq.md
+      section: E-2077
+- id: q30
+  query: How long does the sensor battery last?
+  relevant:
+    - source: beacon-faq.md
+      section: Battery
+- id: q31
+  query: Is there a monthly fee for Beacon Business?
+  relevant:
+    - source: beacon-faq.md
+      section: Pricing
+- id: q32
+  query: How long do you keep my air quality measurements?
+  relevant:
+    - source: beacon-faq.md
+      section: Data retention
+- id: q33
+  query: Does the app work on Android 12?
+  relevant:
+    - source: beacon-faq.md
+      section: Supported platforms
+- id: q34
+  query: What counts as a SEV2 incident?
+  relevant:
+    - source: incident-runbook.md
+      section: Severity levels
+- id: q35
+  query: How quickly must the on-call engineer acknowledge a page?
+  relevant:
+    - source: incident-runbook.md
+      section: On-call rotation
+- id: q36
+  query: How do I declare an incident in Slack?
+  relevant:
+    - source: incident-runbook.md
+      section: Declaring an incident
+- id: q37
+  query: When is a postmortem required?
+  relevant:
+    - source: incident-runbook.md
+      section: Postmortems
+- id: q38
+  query: What was revenue in the third quarter?
+  relevant:
+    - source: q3-report.pdf
+      page: 1
+- id: q39
+  query: What is our monthly customer churn rate?
+  relevant:
+    - source: q3-report.pdf
+      page: 2
+- id: q40
+  query: When does Beacon Mini launch and what will it cost?
+  relevant:
+    - source: q3-report.pdf
+      page: 3

@@ -12,6 +12,8 @@ The current milestone and its acceptance criteria are in docs/milestones.md.
 - Integration: `make up` then `uv run pytest -m integration`
 - Evals: `make eval-smoke`
 - Run an agent: `uv run goalsmith run "<goal>" [--max-steps N] [--run-id NAME]`
+- Documents: `uv run goalsmith ingest <files or folders> [-c COLLECTION]`, `uv run goalsmith search "<q>"`
+- Retrieval eval: `make eval-retrieval` (writes evals/retrieval/report.md)
 - Add a dependency: `uv add <pkg>` (never pip install)
 
 ## Architecture rules

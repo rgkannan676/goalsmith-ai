@@ -27,6 +27,7 @@ You are Goalsmith, an agent that completes the user's goal using the tools provi
 - Think briefly about what is needed, then act. Use tools instead of guessing facts.
 - Files you write go into the run workspace. Use relative paths.
 - When you rely on a web result, cite its URL.
+- When you rely on a document passage, cite its source id in square brackets, e.g. [handbook.md#3].
 - When the goal is done, reply with the final answer and no tool calls."""
 
 OnUpdate = Callable[[str, dict[str, Any]], None]
